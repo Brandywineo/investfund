@@ -12,17 +12,19 @@ import {
   users,
   withdrawals,
 } from '#/db/schema'
-import { formatUsdt } from '#/domain/money'
+import { formatUsdt, money } from '#/domain/money'
 import {
   availableTreasuryLiquidity,
   reserveRequirement,
 } from '#/domain/treasury'
 import {
   approveWithdrawal,
+  advanceTreasuryStatus,
   broadcastTreasuryTransfer,
   broadcastWithdrawal,
   confirmDeposit,
   creditBrokerTransfer,
+  releaseApprovedWithdrawal,
 } from './custody.service'
 import { getSessionUser } from './session'
 
@@ -152,6 +154,7 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
       settings,
       platformBalances,
       withdrawable,
+      totalUserLiabilities,
       depositRows,
       withdrawalRows,
       transferRows,
@@ -183,6 +186,17 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
           eq(ledgerAccounts.id, ledgerEntries.accountId),
         )
         .where(like(ledgerAccounts.code, 'USER:%:AVAILABLE'))
+        .then((rows) => rows.at(0)?.value ?? '0'),
+      db
+        .select({
+          value: sql<string>`coalesce(sum(${ledgerEntries.credit} - ${ledgerEntries.debit}), 0)`,
+        })
+        .from(ledgerEntries)
+        .innerJoin(
+          ledgerAccounts,
+          eq(ledgerAccounts.id, ledgerEntries.accountId),
+        )
+        .where(like(ledgerAccounts.code, 'USER:%'))
         .then((rows) => rows.at(0)?.value ?? '0'),
       db
         .select({
@@ -223,8 +237,8 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
       platformBalances.map((row) => [
         row.code,
         row.normal === 'DEBIT'
-          ? Number(row.debit) - Number(row.credit)
-          : Number(row.credit) - Number(row.debit),
+          ? money(row.debit).minus(row.credit).toString()
+          : money(row.credit).minus(row.debit).toString(),
       ]),
     )
     const hotWallet = String(balances['PLATFORM:HOT_WALLET'] ?? 0)
@@ -234,6 +248,10 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
       settings.reserveFixed,
       settings.reservePercent,
     )
+    const totalAssets = money(hotWallet)
+      .add(balances['PLATFORM:TREASURY_IN_TRANSIT'] ?? 0)
+      .add(balances['PLATFORM:BROKER_TREASURY'] ?? 0)
+    const totalLiabilities = money(totalUserLiabilities).add(reserved)
     return {
       settings,
       summary: {
@@ -247,6 +265,19 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
         requiredReserve: formatUsdt(required),
         transferable: formatUsdt(
           availableTreasuryLiquidity(hotWallet, reserved, required.toString()),
+        ),
+        totalAssets: formatUsdt(totalAssets),
+        totalLiabilities: formatUsdt(totalLiabilities),
+        reconciliationDifference: formatUsdt(
+          totalAssets.minus(totalLiabilities),
+        ),
+        unreconciledItems: String(
+          transferRows.filter(
+            (item) => !['RECONCILED', 'FAILED'].includes(item.status),
+          ).length +
+            withdrawalRows.filter((item) =>
+              ['APPROVED', 'BROADCAST'].includes(item.status),
+            ).length,
         ),
       },
       deposits: depositRows,
@@ -351,30 +382,43 @@ export const advanceTreasuryTransfer = createServerFn({ method: 'POST' })
   .validator(
     z.object({
       transferId: z.string().uuid(),
-      action: z.enum(['BROADCAST', 'BROKER_CREDIT', 'RECONCILE']),
+      action: z.enum([
+        'APPROVE',
+        'BROADCAST',
+        'CHAIN_CONFIRM',
+        'BROKER_CREDIT',
+        'RECONCILE',
+      ]),
       reference: referenceSchema,
     }),
   )
   .handler(async ({ data }) => {
     const admin = await requireAdmin()
-    if (data.action === 'BROADCAST')
+    if (data.action === 'APPROVE') {
+      await advanceTreasuryStatus(
+        data.transferId,
+        'DRAFTED',
+        'APPROVED',
+        admin.id,
+      )
+    } else if (data.action === 'BROADCAST')
       await broadcastTreasuryTransfer(data.transferId, data.reference, admin.id)
-    else if (data.action === 'BROKER_CREDIT')
+    else if (data.action === 'CHAIN_CONFIRM') {
+      await advanceTreasuryStatus(
+        data.transferId,
+        'BROADCAST',
+        'CONFIRMED',
+        admin.id,
+      )
+    } else if (data.action === 'BROKER_CREDIT')
       await creditBrokerTransfer(data.transferId, data.reference, admin.id)
     else {
-      const result = await getDb()
-        .update(treasuryTransfers)
-        .set({
-          status: 'RECONCILED',
-          reconciledAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .where(
-          sql`${treasuryTransfers.id} = ${data.transferId} and ${treasuryTransfers.status} = 'BROKER_CREDITED'`,
-        )
-        .returning({ id: treasuryTransfers.id })
-      if (result.length !== 1)
-        throw new Error('Broker-credited transfer not found')
+      await advanceTreasuryStatus(
+        data.transferId,
+        'BROKER_CREDITED',
+        'RECONCILED',
+        admin.id,
+      )
     }
     return { success: true }
   })
@@ -383,7 +427,13 @@ export const reviewWithdrawal = createServerFn({ method: 'POST' })
   .validator(
     z.object({
       withdrawalId: z.string().uuid(),
-      action: z.enum(['APPROVE', 'REJECT', 'BROADCAST', 'CONFIRM']),
+      action: z.enum([
+        'APPROVE',
+        'REJECT',
+        'BROADCAST',
+        'CONFIRM',
+        'FAIL_APPROVED',
+      ]),
       reference: z.string().trim().max(160).optional(),
     }),
   )
@@ -391,7 +441,13 @@ export const reviewWithdrawal = createServerFn({ method: 'POST' })
     const admin = await requireAdmin()
     if (data.action === 'APPROVE')
       await approveWithdrawal(data.withdrawalId, admin.id)
-    else if (data.action === 'BROADCAST') {
+    else if (data.action === 'FAIL_APPROVED') {
+      await releaseApprovedWithdrawal(
+        data.withdrawalId,
+        admin.id,
+        data.reference || 'Broadcast failed before funds were sent',
+      )
+    } else if (data.action === 'BROADCAST') {
       if (!data.reference || data.reference.length < 8)
         throw new Error('A transaction hash is required')
       await broadcastWithdrawal(data.withdrawalId, data.reference, admin.id)

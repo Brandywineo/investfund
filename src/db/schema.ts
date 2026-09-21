@@ -42,7 +42,9 @@ export const depositStatus = pgEnum('deposit_status', [
 ])
 export const treasuryTransferStatus = pgEnum('treasury_transfer_status', [
   'DRAFTED',
+  'APPROVED',
   'BROADCAST',
+  'CONFIRMED',
   'BROKER_CREDITED',
   'FAILED',
   'RECONCILED',
@@ -52,6 +54,7 @@ export const withdrawalStatus = pgEnum('withdrawal_status', [
   'APPROVED',
   'BROADCAST',
   'CONFIRMED',
+  'FAILED',
   'REJECTED',
   'CANCELLED',
 ])

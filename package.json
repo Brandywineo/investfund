@@ -18,7 +18,8 @@
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "admin:promote": "node scripts/promote-admin.mjs"
+    "admin:promote": "node scripts/promote-admin.mjs",
+    "accrual:run": "tsx scripts/run-daily-accruals.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.18",
@@ -47,6 +48,7 @@
     "drizzle-kit": "^0.31.10",
     "eslint": "^9.20.0",
     "prettier": "^3.8.1",
+    "tsx": "^4.23.15",
     "typescript": "^6.0.2",
     "vite": "^8.0.0",
     "vitest": "^5.0.1"

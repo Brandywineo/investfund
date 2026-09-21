@@ -343,6 +343,26 @@ function CustodyAdminPage() {
                     >
                       Record broadcast
                     </button>
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        void run(
+                          () =>
+                            reviewWithdrawal({
+                              data: {
+                                withdrawalId: item.id,
+                                action: 'FAIL_APPROVED',
+                                reference:
+                                  'Broadcast failed before funds were sent',
+                              },
+                            }),
+                          'Reservation released to the user.',
+                        )
+                      }
+                      className="danger"
+                    >
+                      Release failed payment
+                    </button>
                   </>
                 )}
                 {item.status === 'BROADCAST' && (
@@ -378,6 +398,27 @@ function CustodyAdminPage() {
             >
               <div className="grid min-w-52 gap-2">
                 {item.status === 'DRAFTED' && (
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      void run(
+                        () =>
+                          advanceTreasuryTransfer({
+                            data: {
+                              transferId: item.id,
+                              action: 'APPROVE',
+                              reference: 'approved',
+                            },
+                          }),
+                        'Treasury transfer approved.',
+                      )
+                    }
+                    className="action"
+                  >
+                    Approve transfer
+                  </button>
+                )}
+                {item.status === 'APPROVED' && (
                   <>
                     {refInput(item.id, 'Blockchain TXID')}
                     <button
@@ -402,6 +443,27 @@ function CustodyAdminPage() {
                   </>
                 )}
                 {item.status === 'BROADCAST' && (
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      void run(
+                        () =>
+                          advanceTreasuryTransfer({
+                            data: {
+                              transferId: item.id,
+                              action: 'CHAIN_CONFIRM',
+                              reference: 'confirmed',
+                            },
+                          }),
+                        'Blockchain confirmation recorded.',
+                      )
+                    }
+                    className="action"
+                  >
+                    Confirm on-chain
+                  </button>
+                )}
+                {item.status === 'CONFIRMED' && (
                   <>
                     {refInput(item.id, 'MT5/broker reference')}
                     <button

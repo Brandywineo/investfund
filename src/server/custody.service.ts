@@ -256,8 +256,8 @@ export async function broadcastTreasuryTransfer(
       .where(eq(treasuryTransfers.id, transferId))
       .limit(1)
       .then((rows) => rows.at(0))
-    if (!transfer || transfer.status !== 'DRAFTED')
-      throw new Error('Drafted treasury transfer not found')
+    if (!transfer || transfer.status !== 'APPROVED')
+      throw new Error('Approved treasury transfer not found')
     const settings = await tx
       .select()
       .from(custodySettings)
@@ -344,8 +344,8 @@ export async function creditBrokerTransfer(
       .where(eq(treasuryTransfers.id, transferId))
       .limit(1)
       .then((rows) => rows.at(0))
-    if (!transfer || transfer.status !== 'BROADCAST')
-      throw new Error('Broadcast treasury transfer not found')
+    if (!transfer || transfer.status !== 'CONFIRMED')
+      throw new Error('Chain-confirmed treasury transfer not found')
     const inTransit = await account(tx, 'PLATFORM:TREASURY_IN_TRANSIT')
     const broker = await account(tx, 'PLATFORM:BROKER_TREASURY')
     const ledger = await postLedgerTransaction(tx, {
@@ -383,6 +383,99 @@ export async function creditBrokerTransfer(
       transfer.id,
       { status: transfer.status },
       { status: 'BROKER_CREDITED', brokerReference },
+    )
+  })
+}
+
+export async function advanceTreasuryStatus(
+  transferId: string,
+  from: 'DRAFTED' | 'BROADCAST' | 'BROKER_CREDITED',
+  to: 'APPROVED' | 'CONFIRMED' | 'RECONCILED',
+  actorUserId: string,
+) {
+  return getDb().transaction(async (tx) => {
+    const transfer = await tx
+      .select()
+      .from(treasuryTransfers)
+      .where(eq(treasuryTransfers.id, transferId))
+      .limit(1)
+      .then((rows) => rows.at(0))
+    if (!transfer || transfer.status !== from)
+      throw new Error(`${from.toLowerCase()} treasury transfer not found`)
+
+    await tx
+      .update(treasuryTransfers)
+      .set({
+        status: to,
+        ...(to === 'RECONCILED' ? { reconciledAt: new Date() } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(treasuryTransfers.id, transferId))
+    await audit(
+      tx,
+      actorUserId,
+      `TREASURY_TRANSFER_${to}`,
+      'treasury_transfer',
+      transferId,
+      { status: from },
+      { status: to },
+    )
+  })
+}
+
+export async function releaseApprovedWithdrawal(
+  withdrawalId: string,
+  actorUserId: string,
+  reason: string,
+) {
+  return getDb().transaction(async (tx) => {
+    const withdrawal = await tx
+      .select()
+      .from(withdrawals)
+      .where(eq(withdrawals.id, withdrawalId))
+      .limit(1)
+      .then((rows) => rows.at(0))
+    if (!withdrawal || withdrawal.status !== 'APPROVED')
+      throw new Error('Approved withdrawal not found')
+    const available = await account(tx, `USER:${withdrawal.userId}:AVAILABLE`)
+    const reserved = await account(tx, 'PLATFORM:WITHDRAWAL_RESERVED')
+    await postLedgerTransaction(tx, {
+      eventType: 'WITHDRAWAL_RESERVATION_RELEASED',
+      referenceType: 'withdrawal',
+      referenceId: withdrawal.id,
+      idempotencyKey: `withdrawal:${withdrawal.id}:reservation-released`,
+      description: 'Release failed withdrawal reservation',
+      effectiveAt: new Date(),
+      createdBy: actorUserId,
+      lines: [
+        {
+          accountId: reserved,
+          side: 'DEBIT',
+          amount: money(withdrawal.amount),
+        },
+        {
+          accountId: available,
+          side: 'CREDIT',
+          amount: money(withdrawal.amount),
+        },
+      ],
+    })
+    await tx
+      .update(withdrawals)
+      .set({
+        status: 'FAILED',
+        rejectionReason: reason,
+        updatedAt: new Date(),
+      })
+      .where(eq(withdrawals.id, withdrawal.id))
+    await audit(
+      tx,
+      actorUserId,
+      'WITHDRAWAL_RESERVATION_RELEASED',
+      'withdrawal',
+      withdrawal.id,
+      { status: 'APPROVED' },
+      { status: 'FAILED', reason },
     )
   })
 }
