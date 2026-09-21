@@ -102,6 +102,7 @@ function AdminPage() {
             aria-label="Admin navigation"
             className="flex flex-wrap gap-x-5 gap-y-2 text-sm font-bold"
           >
+            <Link to="/admin/custody">Custody</Link>
             <Link to="/admin/users">Manage users</Link>
             <Link to="/app">Dashboard →</Link>
           </nav>

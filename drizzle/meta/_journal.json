@@ -22,6 +22,13 @@
       "when": 1789966944314,
       "tag": "0002_seed_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789997433502,
+      "tag": "0003_nosy_rocket_raccoon",
+      "breakpoints": true
     }
   ]
 }

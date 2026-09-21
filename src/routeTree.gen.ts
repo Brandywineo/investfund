@@ -16,6 +16,8 @@ import { Route as InvestRouteImport } from './routes/invest'
 import { Route as LedgerRouteImport } from './routes/ledger'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as SignupRouteImport } from './routes/signup'
+import { Route as WalletRouteImport } from './routes/wallet'
+import { Route as AdminCustodyRouteImport } from './routes/admin_.custody'
 import { Route as AdminUsersRouteImport } from './routes/admin_.users'
 
 const IndexRoute = IndexRouteImport.update({
@@ -53,6 +55,16 @@ const SignupRoute = SignupRouteImport.update({
   path: '/signup',
   getParentRoute: () => rootRouteImport,
 } as any)
+const WalletRoute = WalletRouteImport.update({
+  id: '/wallet',
+  path: '/wallet',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminCustodyRoute = AdminCustodyRouteImport.update({
+  id: '/admin_/custody',
+  path: '/admin/custody',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminUsersRoute = AdminUsersRouteImport.update({
   id: '/admin_/users',
   path: '/admin/users',
@@ -67,6 +79,8 @@ export interface FileRoutesByFullPath {
   '/ledger': typeof LedgerRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/wallet': typeof WalletRoute
+  '/admin/custody': typeof AdminCustodyRoute
   '/admin/users': typeof AdminUsersRoute
 }
 export interface FileRoutesByTo {
@@ -77,6 +91,8 @@ export interface FileRoutesByTo {
   '/ledger': typeof LedgerRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/wallet': typeof WalletRoute
+  '/admin/custody': typeof AdminCustodyRoute
   '/admin/users': typeof AdminUsersRoute
 }
 export interface FileRoutesById {
@@ -88,6 +104,8 @@ export interface FileRoutesById {
   '/ledger': typeof LedgerRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/wallet': typeof WalletRoute
+  '/admin_/custody': typeof AdminCustodyRoute
   '/admin_/users': typeof AdminUsersRoute
 }
 export interface FileRouteTypes {
@@ -100,6 +118,8 @@ export interface FileRouteTypes {
     | '/ledger'
     | '/login'
     | '/signup'
+    | '/wallet'
+    | '/admin/custody'
     | '/admin/users'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -110,6 +130,8 @@ export interface FileRouteTypes {
     | '/ledger'
     | '/login'
     | '/signup'
+    | '/wallet'
+    | '/admin/custody'
     | '/admin/users'
   id:
     | '__root__'
@@ -120,6 +142,8 @@ export interface FileRouteTypes {
     | '/ledger'
     | '/login'
     | '/signup'
+    | '/wallet'
+    | '/admin_/custody'
     | '/admin_/users'
   fileRoutesById: FileRoutesById
 }
@@ -131,6 +155,8 @@ export interface RootRouteChildren {
   LedgerRoute: typeof LedgerRoute
   LoginRoute: typeof LoginRoute
   SignupRoute: typeof SignupRoute
+  WalletRoute: typeof WalletRoute
+  AdminCustodyRoute: typeof AdminCustodyRoute
   AdminUsersRoute: typeof AdminUsersRoute
 }
 
@@ -185,6 +211,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SignupRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/wallet': {
+      id: '/wallet'
+      path: '/wallet'
+      fullPath: '/wallet'
+      preLoaderRoute: typeof WalletRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin_/custody': {
+      id: '/admin_/custody'
+      path: '/admin/custody'
+      fullPath: '/admin/custody'
+      preLoaderRoute: typeof AdminCustodyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin_/users': {
       id: '/admin_/users'
       path: '/admin/users'
@@ -203,6 +243,8 @@ const rootRouteChildren: RootRouteChildren = {
   LedgerRoute: LedgerRoute,
   LoginRoute: LoginRoute,
   SignupRoute: SignupRoute,
+  WalletRoute: WalletRoute,
+  AdminCustodyRoute: AdminCustodyRoute,
   AdminUsersRoute: AdminUsersRoute,
 }
 export const routeTree = rootRouteImport
