@@ -1,4 +1,4 @@
-import { and, eq, gte, lte, or, isNull, desc } from 'drizzle-orm'
+import { and, eq, gte, lte, or, isNull, desc, sql } from 'drizzle-orm'
 import type { Database } from '#/db'
 import { getDb } from '#/db'
 import {
@@ -13,6 +13,7 @@ import {
 import { calculateDailyAccrual, accrualIdempotencyKey, validateInvestmentAmount } from '#/domain/accrual'
 import { assertBalanced } from '#/domain/ledger'
 import type { LedgerLine } from '#/domain/ledger'
+import { money } from '#/domain/money'
 
 interface PostTransactionInput {
   eventType: string
@@ -80,6 +81,14 @@ export async function createInvestment(userId: string, rawAmount: string, reques
 
     const available = await requireAccount(tx, `USER:${userId}:AVAILABLE`)
     const invested = await requireAccount(tx, `USER:${userId}:INVESTED`)
+    await tx.execute(sql`select id from ledger_accounts where id = ${available} for update`)
+    const availableTotal = (await tx
+      .select({ balance: sql<string>`coalesce(sum(${ledgerEntries.credit} - ${ledgerEntries.debit}), 0)` })
+      .from(ledgerEntries)
+      .where(eq(ledgerEntries.accountId, available)))
+      .at(0)?.balance ?? '0'
+    if (money(availableTotal).lessThan(amount)) throw new Error('Insufficient available balance')
+
     await postLedgerTransaction(tx, {
       eventType: 'INVESTMENT_ACTIVATED', referenceType: 'investment', referenceId: investment.id,
       idempotencyKey: `investment:${requestId}`, description: 'Move available balance into active investment',

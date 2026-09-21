@@ -17,7 +17,7 @@ Milestone 1 is in progress. The current foundation includes:
 - password authentication with database-backed, HTTP-only sessions;
 - protected application routes and registration/login screens;
 - transactional investment and daily-accrual ledger services; and
-- Hestia/systemd/Nginx deployment templates.
+- a portable Nitro production server that binds to environment-configured host and port.
 
 See [ROADMAP.md](./ROADMAP.md) for the four delivery milestones and acceptance criteria.
 
@@ -42,5 +42,3 @@ npm run lint
 ```
 
 The application can also use Bun on deployment servers after dependencies are installed with Bun.
-
-Production deployment guidance is in [deploy/HESTIA.md](./deploy/HESTIA.md).

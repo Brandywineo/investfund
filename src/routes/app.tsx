@@ -1,5 +1,6 @@
-import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, redirect, useNavigate, Link } from '@tanstack/react-router'
 import { logout, currentUser } from '#/server/auth.functions'
+import { getPortfolio } from '#/server/portfolio.functions'
 
 export const Route = createFileRoute('/app')({
   beforeLoad: async () => {
@@ -7,17 +8,17 @@ export const Route = createFileRoute('/app')({
     if (!user) throw redirect({ to: '/login' })
     return { user }
   },
+  loader: () => getPortfolio(),
   component: Home,
 })
 
 function Home() {
   const { user } = Route.useRouteContext()
+  const portfolio = Route.useLoaderData()
   const navigate = useNavigate()
-  const activity = [
-    ['Daily accrual posted', '+20.40 USDT', 'Today, 00:05'],
-    ['Investment activated', '1,000.00 USDT', '20 Sep, 14:22'],
-    ['Deposit confirmed', '1,200.00 USDT', '20 Sep, 13:48'],
-  ]
+  const activity = portfolio.latestActivatedAt
+    ? [['Investment activated', `${portfolio.activePrincipal} USDT`, new Date(portfolio.latestActivatedAt).toLocaleDateString()]]
+    : [['No transactions yet', '—', 'Fund your wallet to begin']]
 
   return (
     <main className="min-h-screen bg-[#f4f6f2] text-[#10251c]">
@@ -30,6 +31,7 @@ function Home() {
           <div className="hidden items-center gap-8 text-sm text-[#557065] md:flex">
             <span className="font-semibold text-[#123d2d]">Overview</span>
             <span>Invest</span><span>Trading</span><span>Community</span><span>Wallet</span>
+            {user.role === 'ADMIN' ? <Link to="/admin">Admin</Link> : null}
           </div>
           <button onClick={async () => { await logout(); await navigate({ to: '/login' }) }} className="rounded-full bg-white px-4 py-2 text-sm font-semibold shadow-sm ring-1 ring-black/8" title="Sign out">{user.displayName.slice(0, 2).toUpperCase()}</button>
         </div>
@@ -41,23 +43,23 @@ function Home() {
             <p className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-[#648174]">Monday, 21 September</p>
             <h1 className="text-3xl font-semibold tracking-[-0.04em] md:text-5xl">Good morning, {user.displayName.split(' ')[0]}.</h1>
           </div>
-          <button className="w-fit rounded-full bg-[#d9ff71] px-6 py-3 text-sm font-bold text-[#123d2d] shadow-[0_8px_30px_rgba(133,176,31,.2)]">Start investing</button>
+          <Link to="/invest" className="w-fit rounded-full bg-[#d9ff71] px-6 py-3 text-sm font-bold text-[#123d2d] shadow-[0_8px_30px_rgba(133,176,31,.2)]">Start investing</Link>
         </div>
 
         <div className="grid gap-5 lg:grid-cols-[1.35fr_.65fr]">
           <article className="overflow-hidden rounded-[2rem] bg-[#123d2d] p-7 text-white shadow-[0_24px_70px_rgba(18,61,45,.18)] md:p-10">
             <div className="flex items-start justify-between">
-              <div><p className="text-sm text-white/60">Total portfolio</p><p className="mt-3 text-4xl font-semibold tracking-[-0.04em] md:text-6xl">$1,240.40</p></div>
-              <span className="rounded-full bg-[#d9ff71]/15 px-3 py-1.5 text-xs font-bold text-[#d9ff71]">+2.00% today</span>
+              <div><p className="text-sm text-white/60">Total portfolio</p><p className="mt-3 text-4xl font-semibold tracking-[-0.04em] md:text-6xl">${portfolio.totalPortfolio}</p></div>
+              <span className="rounded-full bg-[#d9ff71]/15 px-3 py-1.5 text-xs font-bold text-[#d9ff71]">{portfolio.dailyRatePercent}% daily rate</span>
             </div>
             <div className="mt-12 grid grid-cols-2 gap-4 border-t border-white/12 pt-6 md:grid-cols-4">
-              {[['Active investment','$1,020.00'],['Available','$220.40'],["Today's accrual",'+$20.40'],['Daily rate','2.00%']].map(([label,value]) => <div key={label}><p className="text-xs text-white/50">{label}</p><p className="mt-1 font-semibold">{value}</p></div>)}
+              {[['Active investment',`$${portfolio.activeInvestmentBalance}`],['Available',`$${portfolio.available}`],['Principal',`$${portfolio.activePrincipal}`],['Daily rate',`${portfolio.dailyRatePercent}%`]].map(([label,value]) => <div key={label}><p className="text-xs text-white/50">{label}</p><p className="mt-1 font-semibold">{value}</p></div>)}
             </div>
           </article>
 
           <article className="rounded-[2rem] bg-[#e2e9d9] p-7 md:p-8">
             <p className="text-sm font-semibold text-[#557065]">Current investment</p>
-            <div className="mt-8 flex items-end justify-between"><div><p className="text-3xl font-semibold">Day 2</p><p className="mt-1 text-sm text-[#557065]">Compounding daily</p></div><div className="grid size-16 place-items-center rounded-full bg-white text-sm font-bold shadow-sm">2%</div></div>
+            <div className="mt-8 flex items-end justify-between"><div><p className="text-3xl font-semibold">${portfolio.activeInvestmentBalance}</p><p className="mt-1 text-sm text-[#557065]">Compounding balance</p></div><div className="grid size-16 place-items-center rounded-full bg-white text-sm font-bold shadow-sm">{portfolio.dailyRatePercent}%</div></div>
             <div className="mt-8 h-2 overflow-hidden rounded-full bg-black/8"><div className="h-full w-2/3 rounded-full bg-[#85ae38]" /></div>
             <p className="mt-4 text-xs leading-5 text-[#557065]">Rate changes apply forward only. Every daily posting remains visible in your ledger.</p>
           </article>
