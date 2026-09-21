@@ -8,6 +8,20 @@
       "when": 1789964640241,
       "tag": "0000_marvelous_selene",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789966884733,
+      "tag": "0001_curvy_madelyne_pryor",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789966944314,
+      "tag": "0002_seed_foundation",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,21 @@
+[Unit]
+Description=InvestFund TanStack Start application
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=HESTIA_USER
+Group=HESTIA_USER
+WorkingDirectory=/home/HESTIA_USER/web/DOMAIN/public_html
+EnvironmentFile=/home/HESTIA_USER/web/DOMAIN/public_html/.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node .output/server/index.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

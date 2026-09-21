@@ -14,6 +14,10 @@ Milestone 1 is in progress. The current foundation includes:
 - exact-decimal compounding calculations and idempotency keys;
 - financial-invariant unit tests; and
 - the initial responsive investor dashboard.
+- password authentication with database-backed, HTTP-only sessions;
+- protected application routes and registration/login screens;
+- transactional investment and daily-accrual ledger services; and
+- Hestia/systemd/Nginx deployment templates.
 
 See [ROADMAP.md](./ROADMAP.md) for the four delivery milestones and acceptance criteria.
 
@@ -38,3 +42,5 @@ npm run lint
 ```
 
 The application can also use Bun on deployment servers after dependencies are installed with Bun.
+
+Production deployment guidance is in [deploy/HESTIA.md](./deploy/HESTIA.md).
