@@ -83,12 +83,18 @@ export async function runChainWorker() {
     .limit(1)
     .then((rows) => rows.at(0))
   const configuredStart = Number(process.env.BSC_START_BLOCK || 0)
+  const configuredScanBlocks = Number(process.env.BSC_SCAN_BLOCKS || 50)
+  const scanBlocks = Number.isSafeInteger(configuredScanBlocks)
+    ? Math.min(500, Math.max(1, configuredScanBlocks))
+    : 50
   const fromBlock = state
     ? state.lastScannedBlock + 1
     : configuredStart > 0
       ? configuredStart
       : Math.max(0, head - 20)
-  const toBlock = Math.min(head, fromBlock + 499)
+  // Public RPC endpoints commonly impose stricter eth_getLogs limits than
+  // dedicated providers. A private provider can opt into a larger window.
+  const toBlock = Math.min(head, fromBlock + scanBlocks - 1)
   const addressRows = await db
     .select()
     .from(walletAddresses)
