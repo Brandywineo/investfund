@@ -16,7 +16,7 @@ import { Route as InvestRouteImport } from './routes/invest'
 import { Route as LedgerRouteImport } from './routes/ledger'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as SignupRouteImport } from './routes/signup'
-import { Route as AdminUsersRouteImport } from './routes/admin.users'
+import { Route as AdminUsersRouteImport } from './routes/admin_.users'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -54,14 +54,14 @@ const SignupRoute = SignupRouteImport.update({
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminUsersRoute = AdminUsersRouteImport.update({
-  id: '/users',
-  path: '/users',
-  getParentRoute: () => AdminRoute,
+  id: '/admin_/users',
+  path: '/admin/users',
+  getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/admin': typeof AdminRouteWithChildren
+  '/admin': typeof AdminRoute
   '/app': typeof AppRoute
   '/invest': typeof InvestRoute
   '/ledger': typeof LedgerRoute
@@ -71,7 +71,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/admin': typeof AdminRouteWithChildren
+  '/admin': typeof AdminRoute
   '/app': typeof AppRoute
   '/invest': typeof InvestRoute
   '/ledger': typeof LedgerRoute
@@ -82,13 +82,13 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/admin': typeof AdminRouteWithChildren
+  '/admin': typeof AdminRoute
   '/app': typeof AppRoute
   '/invest': typeof InvestRoute
   '/ledger': typeof LedgerRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
-  '/admin/users': typeof AdminUsersRoute
+  '/admin_/users': typeof AdminUsersRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -120,17 +120,18 @@ export interface FileRouteTypes {
     | '/ledger'
     | '/login'
     | '/signup'
-    | '/admin/users'
+    | '/admin_/users'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  AdminRoute: typeof AdminRouteWithChildren
+  AdminRoute: typeof AdminRoute
   AppRoute: typeof AppRoute
   InvestRoute: typeof InvestRoute
   LedgerRoute: typeof LedgerRoute
   LoginRoute: typeof LoginRoute
   SignupRoute: typeof SignupRoute
+  AdminUsersRoute: typeof AdminUsersRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -184,34 +185,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SignupRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/admin/users': {
-      id: '/admin/users'
-      path: '/users'
+    '/admin_/users': {
+      id: '/admin_/users'
+      path: '/admin/users'
       fullPath: '/admin/users'
       preLoaderRoute: typeof AdminUsersRouteImport
-      parentRoute: typeof AdminRoute
+      parentRoute: typeof rootRouteImport
     }
   }
 }
 
-interface AdminRouteChildren {
-  AdminUsersRoute: typeof AdminUsersRoute
-}
-
-const AdminRouteChildren: AdminRouteChildren = {
-  AdminUsersRoute: AdminUsersRoute,
-}
-
-const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
-
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  AdminRoute: AdminRouteWithChildren,
+  AdminRoute: AdminRoute,
   AppRoute: AppRoute,
   InvestRoute: InvestRoute,
   LedgerRoute: LedgerRoute,
   LoginRoute: LoginRoute,
   SignupRoute: SignupRoute,
+  AdminUsersRoute: AdminUsersRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
