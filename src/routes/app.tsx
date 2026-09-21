@@ -1,10 +1,5 @@
-import {
-  createFileRoute,
-  redirect,
-  useNavigate,
-  Link,
-} from '@tanstack/react-router'
-import { logout, currentUser } from '#/server/auth.functions'
+import { createFileRoute, redirect, Link } from '@tanstack/react-router'
+import { currentUser } from '#/server/auth.functions'
 import { getPortfolio } from '#/server/portfolio.functions'
 
 export const Route = createFileRoute('/app')({
@@ -20,7 +15,6 @@ export const Route = createFileRoute('/app')({
 function Home() {
   const { user } = Route.useRouteContext()
   const portfolio = Route.useLoaderData()
-  const navigate = useNavigate()
   const now = new Date()
   const todayLabel = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Africa/Nairobi',
@@ -66,18 +60,16 @@ function Home() {
             <span>Trading</span>
             <span>Community</span>
             <Link to="/ledger">Ledger</Link>
+            <Link to="/account">Account</Link>
             {user.role === 'ADMIN' ? <Link to="/admin">Admin</Link> : null}
           </div>
-          <button
-            onClick={async () => {
-              await logout()
-              await navigate({ to: '/login' })
-            }}
+          <Link
+            to="/account"
             className="rounded-full bg-white px-4 py-2 text-sm font-semibold shadow-sm ring-1 ring-black/8"
-            title="Sign out"
+            title="Account"
           >
             {user.displayName.slice(0, 2).toUpperCase()}
-          </button>
+          </Link>
         </div>
       </nav>
 
@@ -167,27 +159,16 @@ function Home() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-[#557065]">Trading desk</p>
-                <h2 className="mt-1 text-xl font-semibold">Weekly strategy</h2>
+                <h2 className="mt-1 text-xl font-semibold">Not configured</h2>
               </div>
-              <span className="flex items-center gap-2 text-xs font-bold text-[#447d42]">
-                <i className="size-2 rounded-full bg-[#61a75e]" /> LIVE
+              <span className="rounded-full bg-[#eef1eb] px-3 py-1.5 text-xs font-bold text-[#557065]">
+                PLANNED
               </span>
             </div>
-            <div className="mt-8 grid grid-cols-2 gap-4">
-              <div className="rounded-2xl bg-[#f4f6f2] p-4">
-                <p className="text-xs text-[#557065]">Open positions</p>
-                <p className="mt-2 text-2xl font-semibold">4</p>
-              </div>
-              <div className="rounded-2xl bg-[#f4f6f2] p-4">
-                <p className="text-xs text-[#557065]">Today</p>
-                <p className="mt-2 text-2xl font-semibold text-[#447d42]">
-                  +$482
-                </p>
-              </div>
-            </div>
-            <button className="mt-6 text-sm font-bold text-[#123d2d]">
-              View transparent trading →
-            </button>
+            <p className="mt-8 text-sm leading-6 text-[#557065]">
+              Manual strategy reporting and transparent positions will appear
+              here after the trading desk milestone is enabled.
+            </p>
           </article>
 
           <article className="rounded-[2rem] bg-white p-7 ring-1 ring-black/5 md:p-8">
