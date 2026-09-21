@@ -87,6 +87,10 @@ export async function runChainWorker() {
   const scanBlocks = Number.isSafeInteger(configuredScanBlocks)
     ? Math.min(500, Math.max(1, configuredScanBlocks))
     : 50
+  const configuredAddressBatch = Number(process.env.BSC_ADDRESS_BATCH_SIZE || 1)
+  const addressBatchSize = Number.isSafeInteger(configuredAddressBatch)
+    ? Math.min(50, Math.max(1, configuredAddressBatch))
+    : 1
   const fromBlock = state
     ? state.lastScannedBlock + 1
     : configuredStart > 0
@@ -107,7 +111,10 @@ export async function runChainWorker() {
   let credited = 0
 
   if (fromBlock <= toBlock && addressRows.length > 0) {
-    for (const addressChunk of chunks(addressRows, 50)) {
+    // Some public BSC nodes reject OR filters containing multiple recipient
+    // topics. Query one address at a time by default; private RPCs can opt in
+    // to larger batches.
+    for (const addressChunk of chunks(addressRows, addressBatchSize)) {
       const recipientTopics = addressChunk.map((row) =>
         zeroPadValue(getAddress(row.address), 32),
       )
