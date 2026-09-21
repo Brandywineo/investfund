@@ -57,8 +57,8 @@ function Home() {
             <span className="font-semibold text-[#123d2d]">Overview</span>
             <Link to="/invest">Invest</Link>
             <Link to="/wallet">Wallet</Link>
-            <span>Trading</span>
-            <span>Community</span>
+            <Link to="/trading">Trading</Link>
+            <Link to="/community">Community</Link>
             <Link to="/ledger">Ledger</Link>
             <Link to="/account">Account</Link>
             {user.role === 'ADMIN' ? <Link to="/admin">Admin</Link> : null}

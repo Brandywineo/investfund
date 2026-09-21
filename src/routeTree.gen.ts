@@ -13,10 +13,12 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AccountRouteImport } from './routes/account'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AppRouteImport } from './routes/app'
+import { Route as CommunityRouteImport } from './routes/community'
 import { Route as InvestRouteImport } from './routes/invest'
 import { Route as LedgerRouteImport } from './routes/ledger'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as SignupRouteImport } from './routes/signup'
+import { Route as TradingRouteImport } from './routes/trading'
 import { Route as WalletRouteImport } from './routes/wallet'
 import { Route as AdminCustodyRouteImport } from './routes/admin_.custody'
 import { Route as AdminUsersRouteImport } from './routes/admin_.users'
@@ -41,6 +43,11 @@ const AppRoute = AppRouteImport.update({
   path: '/app',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CommunityRoute = CommunityRouteImport.update({
+  id: '/community',
+  path: '/community',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const InvestRoute = InvestRouteImport.update({
   id: '/invest',
   path: '/invest',
@@ -59,6 +66,11 @@ const LoginRoute = LoginRouteImport.update({
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
   path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TradingRoute = TradingRouteImport.update({
+  id: '/trading',
+  path: '/trading',
   getParentRoute: () => rootRouteImport,
 } as any)
 const WalletRoute = WalletRouteImport.update({
@@ -82,10 +94,12 @@ export interface FileRoutesByFullPath {
   '/account': typeof AccountRoute
   '/admin': typeof AdminRoute
   '/app': typeof AppRoute
+  '/community': typeof CommunityRoute
   '/invest': typeof InvestRoute
   '/ledger': typeof LedgerRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/trading': typeof TradingRoute
   '/wallet': typeof WalletRoute
   '/admin/custody': typeof AdminCustodyRoute
   '/admin/users': typeof AdminUsersRoute
@@ -95,10 +109,12 @@ export interface FileRoutesByTo {
   '/account': typeof AccountRoute
   '/admin': typeof AdminRoute
   '/app': typeof AppRoute
+  '/community': typeof CommunityRoute
   '/invest': typeof InvestRoute
   '/ledger': typeof LedgerRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/trading': typeof TradingRoute
   '/wallet': typeof WalletRoute
   '/admin/custody': typeof AdminCustodyRoute
   '/admin/users': typeof AdminUsersRoute
@@ -109,10 +125,12 @@ export interface FileRoutesById {
   '/account': typeof AccountRoute
   '/admin': typeof AdminRoute
   '/app': typeof AppRoute
+  '/community': typeof CommunityRoute
   '/invest': typeof InvestRoute
   '/ledger': typeof LedgerRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/trading': typeof TradingRoute
   '/wallet': typeof WalletRoute
   '/admin_/custody': typeof AdminCustodyRoute
   '/admin_/users': typeof AdminUsersRoute
@@ -124,10 +142,12 @@ export interface FileRouteTypes {
     | '/account'
     | '/admin'
     | '/app'
+    | '/community'
     | '/invest'
     | '/ledger'
     | '/login'
     | '/signup'
+    | '/trading'
     | '/wallet'
     | '/admin/custody'
     | '/admin/users'
@@ -137,10 +157,12 @@ export interface FileRouteTypes {
     | '/account'
     | '/admin'
     | '/app'
+    | '/community'
     | '/invest'
     | '/ledger'
     | '/login'
     | '/signup'
+    | '/trading'
     | '/wallet'
     | '/admin/custody'
     | '/admin/users'
@@ -150,10 +172,12 @@ export interface FileRouteTypes {
     | '/account'
     | '/admin'
     | '/app'
+    | '/community'
     | '/invest'
     | '/ledger'
     | '/login'
     | '/signup'
+    | '/trading'
     | '/wallet'
     | '/admin_/custody'
     | '/admin_/users'
@@ -164,10 +188,12 @@ export interface RootRouteChildren {
   AccountRoute: typeof AccountRoute
   AdminRoute: typeof AdminRoute
   AppRoute: typeof AppRoute
+  CommunityRoute: typeof CommunityRoute
   InvestRoute: typeof InvestRoute
   LedgerRoute: typeof LedgerRoute
   LoginRoute: typeof LoginRoute
   SignupRoute: typeof SignupRoute
+  TradingRoute: typeof TradingRoute
   WalletRoute: typeof WalletRoute
   AdminCustodyRoute: typeof AdminCustodyRoute
   AdminUsersRoute: typeof AdminUsersRoute
@@ -203,6 +229,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/community': {
+      id: '/community'
+      path: '/community'
+      fullPath: '/community'
+      preLoaderRoute: typeof CommunityRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/invest': {
       id: '/invest'
       path: '/invest'
@@ -229,6 +262,13 @@ declare module '@tanstack/react-router' {
       path: '/signup'
       fullPath: '/signup'
       preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/trading': {
+      id: '/trading'
+      path: '/trading'
+      fullPath: '/trading'
+      preLoaderRoute: typeof TradingRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/wallet': {
@@ -260,10 +300,12 @@ const rootRouteChildren: RootRouteChildren = {
   AccountRoute: AccountRoute,
   AdminRoute: AdminRoute,
   AppRoute: AppRoute,
+  CommunityRoute: CommunityRoute,
   InvestRoute: InvestRoute,
   LedgerRoute: LedgerRoute,
   LoginRoute: LoginRoute,
   SignupRoute: SignupRoute,
+  TradingRoute: TradingRoute,
   WalletRoute: WalletRoute,
   AdminCustodyRoute: AdminCustodyRoute,
   AdminUsersRoute: AdminUsersRoute,

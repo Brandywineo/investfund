@@ -14,13 +14,23 @@ export function getPool(): pg.Pool {
     max: Number(process.env.DATABASE_POOL_SIZE ?? 10),
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
-    ssl: process.env.DATABASE_SSL === 'require' ? { rejectUnauthorized: true } : false,
+    ssl:
+      process.env.DATABASE_SSL === 'require'
+        ? { rejectUnauthorized: true }
+        : false,
   })
   return pool
 }
 
 export function getDb() {
   return drizzle(getPool(), { schema })
+}
+
+export async function closePool(): Promise<void> {
+  if (!pool) return
+  const activePool = pool
+  pool = undefined
+  await activePool.end()
 }
 
 export type Database = ReturnType<typeof getDb>
