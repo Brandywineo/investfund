@@ -48,7 +48,7 @@ async function balance(
 
 async function audit(
   tx: TransactionExecutor,
-  actorUserId: string,
+  actorUserId: string | undefined,
   action: string,
   entityType: string,
   entityId: string,
@@ -60,7 +60,7 @@ async function audit(
     .values({ actorUserId, action, entityType, entityId, before, after })
 }
 
-export async function confirmDeposit(depositId: string, actorUserId: string) {
+export async function confirmDeposit(depositId: string, actorUserId?: string) {
   return getDb().transaction(async (tx) => {
     const deposit = await tx
       .select()
@@ -197,8 +197,8 @@ export async function broadcastWithdrawal(
       .where(eq(withdrawals.id, withdrawalId))
       .limit(1)
       .then((rows) => rows.at(0))
-    if (!withdrawal || withdrawal.status !== 'APPROVED')
-      throw new Error('Approved withdrawal not found')
+    if (!withdrawal || withdrawal.status !== 'PROCESSING')
+      throw new Error('Processing withdrawal not found')
     const reserved = await account(tx, 'PLATFORM:WITHDRAWAL_RESERVED')
     const hotWallet = await account(tx, 'PLATFORM:HOT_WALLET')
     const ledger = await postLedgerTransaction(tx, {
@@ -332,6 +332,82 @@ export async function broadcastTreasuryTransfer(
   })
 }
 
+export async function settleBroadcastWithdrawal(
+  withdrawalId: string,
+  succeeded: boolean,
+) {
+  return getDb().transaction(async (tx) => {
+    const withdrawal = await tx
+      .select()
+      .from(withdrawals)
+      .where(eq(withdrawals.id, withdrawalId))
+      .limit(1)
+      .then((rows) => rows.at(0))
+    if (!withdrawal || withdrawal.status !== 'BROADCAST')
+      throw new Error('Broadcast withdrawal not found')
+    if (succeeded) {
+      await tx
+        .update(withdrawals)
+        .set({
+          status: 'CONFIRMED',
+          confirmedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(withdrawals.id, withdrawal.id))
+      await audit(
+        tx,
+        undefined,
+        'WITHDRAWAL_CHAIN_CONFIRMED',
+        'withdrawal',
+        withdrawal.id,
+        { status: 'BROADCAST' },
+        { status: 'CONFIRMED', txHash: withdrawal.txHash },
+      )
+      return
+    }
+
+    const hotWallet = await account(tx, 'PLATFORM:HOT_WALLET')
+    const available = await account(tx, `USER:${withdrawal.userId}:AVAILABLE`)
+    await postLedgerTransaction(tx, {
+      eventType: 'WITHDRAWAL_BROADCAST_REVERTED',
+      referenceType: 'withdrawal',
+      referenceId: withdrawal.id,
+      idempotencyKey: `withdrawal:${withdrawal.id}:broadcast-reverted`,
+      description: 'Restore funds after reverted withdrawal transaction',
+      effectiveAt: new Date(),
+      lines: [
+        {
+          accountId: hotWallet,
+          side: 'DEBIT',
+          amount: money(withdrawal.amount),
+        },
+        {
+          accountId: available,
+          side: 'CREDIT',
+          amount: money(withdrawal.amount),
+        },
+      ],
+    })
+    await tx
+      .update(withdrawals)
+      .set({
+        status: 'CANCELLED',
+        rejectionReason: 'Blockchain transaction reverted',
+        updatedAt: new Date(),
+      })
+      .where(eq(withdrawals.id, withdrawal.id))
+    await audit(
+      tx,
+      undefined,
+      'WITHDRAWAL_CHAIN_REVERTED',
+      'withdrawal',
+      withdrawal.id,
+      { status: 'BROADCAST' },
+      { status: 'CANCELLED', txHash: withdrawal.txHash },
+    )
+  })
+}
+
 export async function creditBrokerTransfer(
   transferId: string,
   brokerReference: string,
@@ -435,8 +511,8 @@ export async function releaseApprovedWithdrawal(
       .where(eq(withdrawals.id, withdrawalId))
       .limit(1)
       .then((rows) => rows.at(0))
-    if (!withdrawal || withdrawal.status !== 'APPROVED')
-      throw new Error('Approved withdrawal not found')
+    if (!withdrawal || !['APPROVED', 'FAILED'].includes(withdrawal.status))
+      throw new Error('Releasable withdrawal not found')
     const available = await account(tx, `USER:${withdrawal.userId}:AVAILABLE`)
     const reserved = await account(tx, 'PLATFORM:WITHDRAWAL_RESERVED')
     await postLedgerTransaction(tx, {
@@ -474,7 +550,7 @@ export async function releaseApprovedWithdrawal(
       'WITHDRAWAL_RESERVATION_RELEASED',
       'withdrawal',
       withdrawal.id,
-      { status: 'APPROVED' },
+      { status: withdrawal.status },
       { status: 'FAILED', reason },
     )
   })

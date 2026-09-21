@@ -4,12 +4,15 @@ import { z } from 'zod'
 import { getDb } from '#/db'
 import {
   auditLogs,
+  chainWatcherState,
   custodySettings,
   deposits,
   ledgerAccounts,
   ledgerEntries,
   treasuryTransfers,
   users,
+  walletAddresses,
+  walletSweeps,
   withdrawals,
 } from '#/db/schema'
 import { formatUsdt, money } from '#/domain/money'
@@ -27,6 +30,8 @@ import {
   releaseApprovedWithdrawal,
 } from './custody.service'
 import { getSessionUser } from './session'
+import { requestWalletSweep } from './signer-api'
+import { getOrCreateWalletAddress } from './wallet-address.service'
 
 const amountSchema = z
   .string()
@@ -72,7 +77,17 @@ export const getCustodyAccount = createServerFn({ method: 'GET' }).handler(
         .limit(50),
     ])
     if (!settings) throw new Error('Custody settings are not initialized')
-    return { settings, deposits: userDeposits, withdrawals: userWithdrawals }
+    let walletAddress: string | null = null
+    if (process.env.SIGNER_URL && process.env.SIGNER_API_TOKEN) {
+      walletAddress = (await getOrCreateWalletAddress(user.id))?.address ?? null
+    }
+    return {
+      settings,
+      depositAddress: walletAddress ?? settings.depositAddress,
+      automatedDeposits: Boolean(walletAddress),
+      deposits: userDeposits,
+      withdrawals: userWithdrawals,
+    }
   },
 )
 
@@ -158,6 +173,9 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
       depositRows,
       withdrawalRows,
       transferRows,
+      addressRows,
+      sweepRows,
+      watcher,
     ] = await Promise.all([
       db
         .select()
@@ -231,6 +249,30 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
         .from(treasuryTransfers)
         .orderBy(desc(treasuryTransfers.createdAt))
         .limit(100),
+      db
+        .select({
+          id: walletAddresses.id,
+          address: walletAddresses.address,
+          userEmail: users.email,
+          status: walletAddresses.status,
+          lastSeenAt: walletAddresses.lastSeenAt,
+          lastSweptAt: walletAddresses.lastSweptAt,
+        })
+        .from(walletAddresses)
+        .innerJoin(users, eq(users.id, walletAddresses.userId))
+        .orderBy(desc(walletAddresses.createdAt))
+        .limit(100),
+      db
+        .select()
+        .from(walletSweeps)
+        .orderBy(desc(walletSweeps.createdAt))
+        .limit(100),
+      db
+        .select()
+        .from(chainWatcherState)
+        .where(eq(chainWatcherState.id, 1))
+        .limit(1)
+        .then((rows) => rows.at(0)),
     ])
     if (!settings) throw new Error('Custody settings are not initialized')
     const balances = Object.fromEntries(
@@ -283,6 +325,9 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
       deposits: depositRows,
       withdrawals: withdrawalRows,
       transfers: transferRows,
+      addresses: addressRows,
+      sweeps: sweepRows,
+      watcher,
     }
   },
 )
@@ -295,6 +340,10 @@ export const updateCustodySettings = createServerFn({ method: 'POST' })
       confirmationThreshold: z.number().int().min(1).max(1000),
       reserveFixed: z.number().min(0).max(1_000_000_000),
       reservePercent: z.number().min(0).max(100),
+      chainId: z.number().int().positive(),
+      tokenContractAddress: z.string().trim().min(20).max(160),
+      autoSweepEnabled: z.boolean(),
+      minimumSweepAmount: z.number().min(0).max(1_000_000_000),
     }),
   )
   .handler(async ({ data }) => {
@@ -314,6 +363,10 @@ export const updateCustodySettings = createServerFn({ method: 'POST' })
           confirmationThreshold: data.confirmationThreshold,
           reserveFixed: String(data.reserveFixed),
           reservePercent: String(data.reservePercent),
+          chainId: data.chainId,
+          tokenContractAddress: data.tokenContractAddress,
+          autoSweepEnabled: data.autoSweepEnabled,
+          minimumSweepAmount: String(data.minimumSweepAmount),
           updatedAt: new Date(),
         })
         .where(eq(custodySettings.id, 1))
@@ -327,6 +380,23 @@ export const updateCustodySettings = createServerFn({ method: 'POST' })
       })
     })
     return { success: true }
+  })
+
+export const sweepWalletAddress = createServerFn({ method: 'POST' })
+  .validator(z.object({ walletAddressId: z.string().uuid() }))
+  .handler(async ({ data }) => {
+    const admin = await requireAdmin()
+    const result = await requestWalletSweep(data.walletAddressId, true)
+    await getDb()
+      .insert(auditLogs)
+      .values({
+        actorUserId: admin.id,
+        action: 'WALLET_SWEEP_FORCED',
+        entityType: 'wallet_address',
+        entityId: data.walletAddressId,
+        after: { txHash: result.txHash, amount: result.amount },
+      })
+    return result
   })
 
 export const reviewDeposit = createServerFn({ method: 'POST' })
@@ -433,6 +503,7 @@ export const reviewWithdrawal = createServerFn({ method: 'POST' })
         'BROADCAST',
         'CONFIRM',
         'FAIL_APPROVED',
+        'RELEASE_FAILED',
       ]),
       reference: z.string().trim().max(160).optional(),
     }),
@@ -441,7 +512,10 @@ export const reviewWithdrawal = createServerFn({ method: 'POST' })
     const admin = await requireAdmin()
     if (data.action === 'APPROVE')
       await approveWithdrawal(data.withdrawalId, admin.id)
-    else if (data.action === 'FAIL_APPROVED') {
+    else if (
+      data.action === 'FAIL_APPROVED' ||
+      data.action === 'RELEASE_FAILED'
+    ) {
       await releaseApprovedWithdrawal(
         data.withdrawalId,
         admin.id,

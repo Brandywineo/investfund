@@ -10,7 +10,6 @@ import {
   cancelWithdrawal,
   getCustodyAccount,
   requestWithdrawal,
-  submitDeposit,
 } from '#/server/custody.functions'
 import { currentUser } from '#/server/auth.functions'
 
@@ -41,20 +40,6 @@ function WalletPage() {
     } finally {
       setBusy(false)
     }
-  }
-  function deposit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const form = new FormData(event.currentTarget)
-    return run(
-      () =>
-        submitDeposit({
-          data: {
-            amount: String(form.get('amount')),
-            txHash: String(form.get('txHash')),
-          },
-        }),
-      'Deposit submitted for confirmation.',
-    )
   }
   function withdraw(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -96,44 +81,22 @@ function WalletPage() {
           </p>
         )}
         <div className="mt-8 grid gap-5 lg:grid-cols-2">
-          <form
-            onSubmit={deposit}
-            className="rounded-[2rem] bg-[#123d2d] p-7 text-white"
-          >
+          <article className="rounded-[2rem] bg-[#123d2d] p-7 text-white">
             <p className="text-xs font-bold uppercase tracking-[.14em] text-[#d9ff71]">
               {data.settings.network} USDT
             </p>
-            <h2 className="mt-2 text-2xl font-semibold">Report a deposit</h2>
+            <h2 className="mt-2 text-2xl font-semibold">
+              Your deposit address
+            </h2>
             <p className="mt-5 break-all rounded-2xl bg-white/10 p-4 text-sm">
-              {data.settings.depositAddress || 'Deposit address not configured'}
+              {data.depositAddress || 'Deposit address not configured'}
             </p>
-            <label className="mt-5 block text-sm font-semibold">
-              Amount
-              <input
-                name="amount"
-                inputMode="decimal"
-                required
-                className={`${input} text-[#10251c]`}
-              />
-            </label>
-            <label className="mt-4 block text-sm font-semibold">
-              Blockchain TXID
-              <input
-                name="txHash"
-                required
-                className={`${input} text-[#10251c]`}
-              />
-            </label>
-            <button
-              disabled={busy || !data.settings.depositAddress}
-              className="mt-6 w-full rounded-2xl bg-[#d9ff71] px-5 py-3 font-bold text-[#123d2d] disabled:opacity-50"
-            >
-              Submit deposit
-            </button>
             <p className="mt-4 text-xs text-white/55">
-              Balance is credited only after administrator confirmation.
+              {data.automatedDeposits
+                ? 'Send only BEP20 USDT. Deposits are detected and credited automatically after one confirmation.'
+                : 'Automatic deposit addresses will appear after the HD wallet signer is connected.'}
             </p>
-          </form>
+          </article>
           <form
             onSubmit={withdraw}
             className="rounded-[2rem] bg-white p-7 ring-1 ring-black/5"

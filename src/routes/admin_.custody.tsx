@@ -12,6 +12,7 @@ import {
   getCustodyDashboard,
   reviewDeposit,
   reviewWithdrawal,
+  sweepWalletAddress,
   updateCustodySettings,
 } from '#/server/custody.functions'
 import { currentUser } from '#/server/auth.functions'
@@ -59,6 +60,10 @@ function CustodyAdminPage() {
             confirmationThreshold: Number(f.get('confirmations')),
             reserveFixed: Number(f.get('fixed')),
             reservePercent: Number(f.get('percent')),
+            chainId: Number(f.get('chainId')),
+            tokenContractAddress: String(f.get('tokenContract')),
+            autoSweepEnabled: f.get('autoSweep') === 'on',
+            minimumSweepAmount: Number(f.get('minimumSweep')),
           },
         }),
       'Custody settings updated.',
@@ -152,6 +157,23 @@ function CustodyAdminPage() {
                   className={input}
                 />
               </label>
+              <label className="text-sm font-semibold">
+                Chain ID
+                <input
+                  name="chainId"
+                  type="number"
+                  defaultValue={data.settings.chainId}
+                  className={input}
+                />
+              </label>
+              <label className="text-sm font-semibold sm:col-span-2">
+                USDT token contract
+                <input
+                  name="tokenContract"
+                  defaultValue={data.settings.tokenContractAddress || ''}
+                  className={input}
+                />
+              </label>
               <label className="text-sm font-semibold sm:col-span-2">
                 Main deposit address
                 <input
@@ -179,6 +201,24 @@ function CustodyAdminPage() {
                   defaultValue={data.settings.reservePercent}
                   className={input}
                 />
+              </label>
+              <label className="text-sm font-semibold">
+                Minimum automatic sweep
+                <input
+                  name="minimumSweep"
+                  type="number"
+                  step="0.01"
+                  defaultValue={data.settings.minimumSweepAmount}
+                  className={input}
+                />
+              </label>
+              <label className="flex items-center gap-3 text-sm font-semibold sm:col-span-2">
+                <input
+                  name="autoSweep"
+                  type="checkbox"
+                  defaultChecked={data.settings.autoSweepEnabled}
+                />
+                Automatically sweep finalized deposits
               </label>
             </div>
             <button
@@ -323,26 +363,10 @@ function CustodyAdminPage() {
                 )}
                 {item.status === 'APPROVED' && (
                   <>
-                    {refInput(item.id, 'Blockchain TXID')}
-                    <button
-                      disabled={busy}
-                      onClick={() =>
-                        void run(
-                          () =>
-                            reviewWithdrawal({
-                              data: {
-                                withdrawalId: item.id,
-                                action: 'BROADCAST',
-                                reference: refs[item.id],
-                              },
-                            }),
-                          'Withdrawal broadcast recorded.',
-                        )
-                      }
-                      className="action"
-                    >
-                      Record broadcast
-                    </button>
+                    <p className="text-xs text-[#6e857a]">
+                      Approved. The isolated signer will broadcast this payment
+                      on its next worker run.
+                    </p>
                     <button
                       disabled={busy}
                       onClick={() =>
@@ -382,10 +406,69 @@ function CustodyAdminPage() {
                     Confirm on-chain
                   </button>
                 )}
+                {item.status === 'FAILED' && (
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      void run(
+                        () =>
+                          reviewWithdrawal({
+                            data: {
+                              withdrawalId: item.id,
+                              action: 'RELEASE_FAILED',
+                              reference:
+                                'Administrator verified no transaction was broadcast',
+                            },
+                          }),
+                        'Failed withdrawal reservation released.',
+                      )
+                    }
+                    className="danger"
+                  >
+                    Release after chain check
+                  </button>
+                )}
               </div>
             </Row>
           ))}
         </Queue>
+        <Queue title="HD deposit addresses">
+          {data.addresses.map((item) => (
+            <Row
+              key={item.id}
+              title={item.userEmail}
+              status={item.status}
+              detail={item.address}
+            >
+              <button
+                disabled={busy}
+                onClick={() =>
+                  void run(
+                    () =>
+                      sweepWalletAddress({
+                        data: { walletAddressId: item.id },
+                      }),
+                    'Wallet sweep broadcast.',
+                  )
+                }
+                className="action"
+              >
+                Sweep now
+              </button>
+            </Row>
+          ))}
+        </Queue>
+        <section className="mt-5 rounded-[2rem] bg-white p-6 ring-1 ring-black/5">
+          <h2 className="text-xl font-semibold">Blockchain watcher</h2>
+          <p className="mt-3 text-sm text-[#6e857a]">
+            {data.watcher
+              ? `Last block ${data.watcher.lastScannedBlock}; head ${data.watcher.lastHeadBlock ?? 'unknown'}; last run ${data.watcher.lastRunAt ? new Date(data.watcher.lastRunAt).toLocaleString() : 'never'}.`
+              : 'The watcher has not completed its first run.'}
+          </p>
+          <p className="mt-2 text-sm text-red-700">
+            {data.watcher?.lastError || ''}
+          </p>
+        </section>
         <Queue title="MT5 treasury transfers">
           {data.transfers.map((item) => (
             <Row

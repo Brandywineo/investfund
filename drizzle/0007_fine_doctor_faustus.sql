@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "wallet_sweeps_active_address_unique" ON "wallet_sweeps" USING btree ("wallet_address_id") WHERE "wallet_sweeps"."status" in ('READY', 'GAS_BROADCAST', 'SWEEP_BROADCAST');

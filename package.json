@@ -19,7 +19,10 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "admin:promote": "node scripts/promote-admin.mjs",
-    "accrual:run": "tsx scripts/run-daily-accruals.ts"
+    "accrual:run": "tsx scripts/run-daily-accruals.ts",
+    "wallet:create": "tsx scripts/create-hd-wallet.ts",
+    "signer:start": "tsx scripts/hd-signer-service.ts",
+    "chain:run": "tsx scripts/run-chain-worker.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.18",
@@ -29,6 +32,7 @@
     "@tanstack/react-start": "latest",
     "decimal.js": "^10.6.0",
     "drizzle-orm": "^0.45.2",
+    "ethers": "^6.17.0",
     "nitro": "^3.0.260610-beta",
     "pg": "^8.23.0",
     "react": "^19.2.0",

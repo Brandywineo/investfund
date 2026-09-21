@@ -4,11 +4,13 @@ import {
   index,
   integer,
   jsonb,
+  bigint,
   numeric,
   pgEnum,
   pgTable,
   primaryKey,
   text,
+  serial,
   timestamp,
   uniqueIndex,
   uuid,
@@ -52,11 +54,26 @@ export const treasuryTransferStatus = pgEnum('treasury_transfer_status', [
 export const withdrawalStatus = pgEnum('withdrawal_status', [
   'REQUESTED',
   'APPROVED',
+  'PROCESSING',
   'BROADCAST',
   'CONFIRMED',
   'FAILED',
   'REJECTED',
   'CANCELLED',
+])
+export const walletAddressStatus = pgEnum('wallet_address_status', [
+  'ACTIVE',
+  'ROTATED',
+  'PAUSED',
+])
+export const sweepStatus = pgEnum('sweep_status', [
+  'WAITING_FINALITY',
+  'BELOW_THRESHOLD',
+  'READY',
+  'GAS_BROADCAST',
+  'SWEEP_BROADCAST',
+  'SWEPT',
+  'FAILED',
 ])
 
 const timestamps = {
@@ -152,17 +169,52 @@ export const custodySettings = pgTable('custody_settings', {
   id: integer('id').primaryKey().default(1),
   network: text('network').default('BEP20').notNull(),
   depositAddress: text('deposit_address'),
-  confirmationThreshold: integer('confirmation_threshold')
-    .default(15)
-    .notNull(),
+  confirmationThreshold: integer('confirmation_threshold').default(1).notNull(),
   reserveFixed: numeric('reserve_fixed', { precision: 20, scale: 8 })
     .default('0')
     .notNull(),
   reservePercent: numeric('reserve_percent', { precision: 9, scale: 6 })
     .default('0')
     .notNull(),
+  chainId: integer('chain_id').default(56).notNull(),
+  tokenContractAddress: text('token_contract_address'),
+  autoSweepEnabled: boolean('auto_sweep_enabled').default(true).notNull(),
+  minimumSweepAmount: numeric('minimum_sweep_amount', {
+    precision: 20,
+    scale: 8,
+  })
+    .default('10')
+    .notNull(),
   ...timestamps,
 })
+
+export const walletAddresses = pgTable(
+  'wallet_addresses',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .references(() => users.id, { onDelete: 'restrict' })
+      .notNull(),
+    derivationIndex: serial('derivation_index').notNull(),
+    address: text('address').notNull(),
+    network: text('network').default('BEP20').notNull(),
+    status: walletAddressStatus('status').default('ACTIVE').notNull(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
+    lastSweptAt: timestamp('last_swept_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('wallet_addresses_address_unique').on(
+      sql`lower(${table.address})`,
+    ),
+    uniqueIndex('wallet_addresses_derivation_index_unique').on(
+      table.derivationIndex,
+    ),
+    uniqueIndex('wallet_addresses_active_user_unique')
+      .on(table.userId)
+      .where(sql`${table.status} = 'ACTIVE'`),
+  ],
+)
 
 export const accrualRates = pgTable(
   'accrual_rates',
@@ -327,6 +379,18 @@ export const deposits = pgTable(
     amount: numeric('amount', { precision: 20, scale: 8 }).notNull(),
     network: text('network').default('BEP20').notNull(),
     txHash: text('tx_hash'),
+    walletAddressId: uuid('wallet_address_id').references(
+      () => walletAddresses.id,
+      { onDelete: 'restrict' },
+    ),
+    chainId: integer('chain_id'),
+    tokenContractAddress: text('token_contract_address'),
+    senderAddress: text('sender_address'),
+    blockNumber: bigint('block_number', { mode: 'number' }),
+    blockHash: text('block_hash'),
+    logIndex: integer('log_index'),
+    confirmations: integer('confirmations').default(0).notNull(),
+    chainFinalizedAt: timestamp('chain_finalized_at', { withTimezone: true }),
     status: depositStatus('status').default('PENDING').notNull(),
     submittedAt: timestamp('submitted_at', { withTimezone: true })
       .defaultNow()
@@ -340,11 +404,55 @@ export const deposits = pgTable(
     ...timestamps,
   },
   (table) => [
-    uniqueIndex('deposits_tx_hash_unique').on(table.txHash),
+    uniqueIndex('deposits_chain_event_unique').on(
+      table.chainId,
+      table.tokenContractAddress,
+      table.txHash,
+      table.logIndex,
+    ),
     index('deposits_user_status_idx').on(table.userId, table.status),
     check('deposit_amount_positive', sql`${table.amount} > 0`),
   ],
 )
+
+export const walletSweeps = pgTable(
+  'wallet_sweeps',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    walletAddressId: uuid('wallet_address_id')
+      .references(() => walletAddresses.id, { onDelete: 'restrict' })
+      .notNull(),
+    amount: numeric('amount', { precision: 20, scale: 8 }).notNull(),
+    status: sweepStatus('status').default('WAITING_FINALITY').notNull(),
+    gasTxHash: text('gas_tx_hash'),
+    sweepTxHash: text('sweep_tx_hash'),
+    failureReason: text('failure_reason'),
+    requestedBy: uuid('requested_by').references(() => users.id),
+    broadcastAt: timestamp('broadcast_at', { withTimezone: true }),
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    index('wallet_sweeps_status_idx').on(table.status),
+    uniqueIndex('wallet_sweeps_active_address_unique')
+      .on(table.walletAddressId)
+      .where(
+        sql`${table.status} in ('READY', 'GAS_BROADCAST', 'SWEEP_BROADCAST')`,
+      ),
+    uniqueIndex('wallet_sweeps_tx_hash_unique').on(table.sweepTxHash),
+    check('wallet_sweep_amount_positive', sql`${table.amount} > 0`),
+  ],
+)
+
+export const chainWatcherState = pgTable('chain_watcher_state', {
+  id: integer('id').primaryKey().default(1),
+  chainId: integer('chain_id').notNull(),
+  lastScannedBlock: bigint('last_scanned_block', { mode: 'number' }).notNull(),
+  lastHeadBlock: bigint('last_head_block', { mode: 'number' }),
+  lastRunAt: timestamp('last_run_at', { withTimezone: true }),
+  lastError: text('last_error'),
+  ...timestamps,
+})
 
 export const treasuryTransfers = pgTable(
   'treasury_transfers',
@@ -389,6 +497,8 @@ export const withdrawals = pgTable(
     network: text('network').default('BEP20').notNull(),
     status: withdrawalStatus('status').default('REQUESTED').notNull(),
     txHash: text('tx_hash'),
+    signedTransaction: text('signed_transaction'),
+    chainNonce: integer('chain_nonce'),
     reviewedBy: uuid('reviewed_by').references(() => users.id),
     reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
     broadcastAt: timestamp('broadcast_at', { withTimezone: true }),
