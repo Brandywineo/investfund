@@ -118,11 +118,13 @@ export async function runChainWorker() {
       const recipientTopics = addressChunk.map((row) =>
         zeroPadValue(getAddress(row.address), 32),
       )
+      const recipientFilter =
+        recipientTopics.length === 1 ? recipientTopics[0] : recipientTopics
       const logs = await provider.getLogs({
         address: settings.tokenContractAddress,
         fromBlock,
         toBlock,
-        topics: [TRANSFER_TOPIC, null, recipientTopics],
+        topics: [TRANSFER_TOPIC, null, recipientFilter],
       })
       for (const log of logs) {
         const parsed = tokenInterface.parseLog(log)
