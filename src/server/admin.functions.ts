@@ -35,7 +35,7 @@ export const updateInvestmentSettings = createServerFn({ method: 'POST' })
   })
 
 export const setDailyRate = createServerFn({ method: 'POST' })
-  .validator(z.object({ ratePercent: z.number().min(0).max(100), reason: z.string().trim().min(3).max(250) }))
+  .validator(z.object({ ratePercent: z.number().positive().max(100), reason: z.string().trim().min(3).max(250) }))
   .handler(async ({ data }) => {
     const admin = await requireAdmin()
     const now = new Date()

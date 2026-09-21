@@ -35,10 +35,10 @@ export async function getSessionUser() {
   if (!token) return null
 
   const result = (await getDb()
-    .select({ id: users.id, email: users.email, displayName: users.displayName, role: users.role })
+    .select({ id: users.id, email: users.email, displayName: users.displayName, role: users.role, status: users.status })
     .from(sessions)
     .innerJoin(users, eq(users.id, sessions.userId))
     .where(and(eq(sessions.tokenHash, hashToken(token)), gt(sessions.expiresAt, new Date())))
     .limit(1)).at(0)
-  return result ?? null
+  return result?.status === 'ACTIVE' ? result : null
 }

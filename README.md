@@ -18,6 +18,9 @@ Milestone 1 is in progress. The current foundation includes:
 - protected application routes and registration/login screens;
 - transactional investment and daily-accrual ledger services; and
 - a portable Nitro production server that binds to environment-configured host and port.
+- user-visible immutable ledger history;
+- administrator user, role, and suspension controls; and
+- retry-safe daily accrual batch processing using the Africa/Nairobi business date.
 
 See [ROADMAP.md](./ROADMAP.md) for the four delivery milestones and acceptance criteria.
 
@@ -42,3 +45,9 @@ npm run lint
 ```
 
 The application can also use Bun on deployment servers after dependencies are installed with Bun.
+
+After registering the first owner account, promote it explicitly with:
+
+```bash
+npm run admin:promote -- owner@example.com
+```

@@ -30,7 +30,7 @@ function Home() {
           </div>
           <div className="hidden items-center gap-8 text-sm text-[#557065] md:flex">
             <span className="font-semibold text-[#123d2d]">Overview</span>
-            <span>Invest</span><span>Trading</span><span>Community</span><span>Wallet</span>
+            <Link to="/invest">Invest</Link><span>Trading</span><span>Community</span><Link to="/ledger">Ledger</Link>
             {user.role === 'ADMIN' ? <Link to="/admin">Admin</Link> : null}
           </div>
           <button onClick={async () => { await logout(); await navigate({ to: '/login' }) }} className="rounded-full bg-white px-4 py-2 text-sm font-semibold shadow-sm ring-1 ring-black/8" title="Sign out">{user.displayName.slice(0, 2).toUpperCase()}</button>
@@ -73,7 +73,7 @@ function Home() {
           </article>
 
           <article className="rounded-[2rem] bg-white p-7 ring-1 ring-black/5 md:p-8">
-            <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">Recent activity</h2><button className="text-sm font-semibold text-[#557065]">View ledger</button></div>
+            <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">Recent activity</h2><Link to="/ledger" className="text-sm font-semibold text-[#557065]">View ledger</Link></div>
             <div className="mt-5 divide-y divide-black/6">{activity.map(([title,amount,time]) => <div className="flex items-center justify-between py-4" key={title}><div><p className="text-sm font-semibold">{title}</p><p className="mt-1 text-xs text-[#83958d]">{time}</p></div><p className="text-sm font-bold">{amount}</p></div>)}</div>
           </article>
         </div>
