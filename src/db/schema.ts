@@ -45,6 +45,7 @@ export const depositStatus = pgEnum('deposit_status', [
 export const treasuryTransferStatus = pgEnum('treasury_transfer_status', [
   'DRAFTED',
   'APPROVED',
+  'PROCESSING',
   'BROADCAST',
   'CONFIRMED',
   'BROKER_CREDITED',
@@ -184,6 +185,12 @@ export const custodySettings = pgTable('custody_settings', {
     scale: 8,
   })
     .default('10')
+    .notNull(),
+  minimumWithdrawalAmount: numeric('minimum_withdrawal_amount', {
+    precision: 20,
+    scale: 8,
+  })
+    .default('50')
     .notNull(),
   ...timestamps,
 })
@@ -460,13 +467,18 @@ export const treasuryTransfers = pgTable(
     id: uuid('id').defaultRandom().primaryKey(),
     amount: numeric('amount', { precision: 20, scale: 8 }).notNull(),
     destination: text('destination').notNull(),
+    direction: text('direction').default('OUTBOUND').notNull(),
+    reason: text('reason').default('Legacy treasury transfer').notNull(),
     status: treasuryTransferStatus('status').default('DRAFTED').notNull(),
     txHash: text('tx_hash'),
+    signedTransaction: text('signed_transaction'),
+    chainNonce: integer('chain_nonce'),
     brokerReference: text('broker_reference'),
     createdBy: uuid('created_by')
       .references(() => users.id)
       .notNull(),
     broadcastAt: timestamp('broadcast_at', { withTimezone: true }),
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
     brokerCreditedAt: timestamp('broker_credited_at', { withTimezone: true }),
     reconciledAt: timestamp('reconciled_at', { withTimezone: true }),
     hotWalletLedgerTransactionId: uuid(

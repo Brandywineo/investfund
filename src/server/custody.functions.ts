@@ -1,6 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { desc, eq, like, sql } from 'drizzle-orm'
 import { z } from 'zod'
+import { isAddress } from 'ethers'
 import { getDb } from '#/db'
 import {
   auditLogs,
@@ -27,6 +28,8 @@ import {
   broadcastWithdrawal,
   confirmDeposit,
   creditBrokerTransfer,
+  recordTreasuryReturn,
+  reserveWithdrawalRequest,
   releaseApprovedWithdrawal,
 } from './custody.service'
 import { getSessionUser } from './session'
@@ -39,6 +42,10 @@ const amountSchema = z
   .regex(/^\d+(\.\d{1,8})?$/)
   .refine((value) => Number(value) > 0, 'Amount must be positive')
 const referenceSchema = z.string().trim().min(8).max(160)
+const addressSchema = z
+  .string()
+  .trim()
+  .refine(isAddress, 'Enter a valid BSC wallet address')
 
 async function requireUser() {
   const user = await getSessionUser()
@@ -120,7 +127,7 @@ export const requestWithdrawal = createServerFn({ method: 'POST' })
   .validator(
     z.object({
       amount: amountSchema,
-      destinationAddress: z.string().trim().min(20).max(160),
+      destinationAddress: addressSchema,
     }),
   )
   .handler(async ({ data }) => {
@@ -132,16 +139,16 @@ export const requestWithdrawal = createServerFn({ method: 'POST' })
       .limit(1)
       .then((rows) => rows.at(0))
     if (!settings) throw new Error('Custody settings are not initialized')
-    const withdrawal = await getDb()
-      .insert(withdrawals)
-      .values({
-        userId: user.id,
-        amount: data.amount,
-        destinationAddress: data.destinationAddress,
-        network: settings.network,
-      })
-      .returning({ id: withdrawals.id })
-      .then((rows) => rows.at(0))
+    if (money(data.amount).lessThan(settings.minimumWithdrawalAmount))
+      throw new Error(
+        `Minimum withdrawal is ${formatUsdt(settings.minimumWithdrawalAmount)} USDT`,
+      )
+    const withdrawal = await reserveWithdrawalRequest({
+      userId: user.id,
+      amount: data.amount,
+      destinationAddress: data.destinationAddress,
+      network: settings.network,
+    })
     return { success: true, withdrawalId: withdrawal?.id }
   })
 
@@ -149,15 +156,21 @@ export const cancelWithdrawal = createServerFn({ method: 'POST' })
   .validator(z.object({ withdrawalId: z.string().uuid() }))
   .handler(async ({ data }) => {
     const user = await requireUser()
-    const result = await getDb()
-      .update(withdrawals)
-      .set({ status: 'CANCELLED', updatedAt: new Date() })
+    const owned = await getDb()
+      .select({ id: withdrawals.id })
+      .from(withdrawals)
       .where(
         sql`${withdrawals.id} = ${data.withdrawalId} and ${withdrawals.userId} = ${user.id} and ${withdrawals.status} = 'REQUESTED'`,
       )
-      .returning({ id: withdrawals.id })
-    if (result.length !== 1)
-      throw new Error('Only a requested withdrawal can be cancelled')
+      .limit(1)
+      .then((rows) => rows.at(0))
+    if (!owned) throw new Error('Only a requested withdrawal can be cancelled')
+    await releaseApprovedWithdrawal(
+      data.withdrawalId,
+      user.id,
+      'Cancelled by user',
+      'CANCELLED',
+    )
     return { success: true }
   })
 
@@ -253,6 +266,7 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
         .select({
           id: walletAddresses.id,
           address: walletAddresses.address,
+          derivationIndex: walletAddresses.derivationIndex,
           userEmail: users.email,
           status: walletAddresses.status,
           lastSeenAt: walletAddresses.lastSeenAt,
@@ -315,7 +329,9 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
         ),
         unreconciledItems: String(
           transferRows.filter(
-            (item) => !['RECONCILED', 'FAILED'].includes(item.status),
+            (item) =>
+              item.direction === 'OUTBOUND' &&
+              !['RECONCILED', 'FAILED'].includes(item.status),
           ).length +
             withdrawalRows.filter((item) =>
               ['APPROVED', 'BROADCAST'].includes(item.status),
@@ -344,6 +360,7 @@ export const updateCustodySettings = createServerFn({ method: 'POST' })
       tokenContractAddress: z.string().trim().min(20).max(160),
       autoSweepEnabled: z.boolean(),
       minimumSweepAmount: z.number().min(0).max(1_000_000_000),
+      minimumWithdrawalAmount: z.number().min(0).max(1_000_000_000),
     }),
   )
   .handler(async ({ data }) => {
@@ -367,6 +384,7 @@ export const updateCustodySettings = createServerFn({ method: 'POST' })
           tokenContractAddress: data.tokenContractAddress,
           autoSweepEnabled: data.autoSweepEnabled,
           minimumSweepAmount: String(data.minimumSweepAmount),
+          minimumWithdrawalAmount: String(data.minimumWithdrawalAmount),
           updatedAt: new Date(),
         })
         .where(eq(custodySettings.id, 1))
@@ -435,7 +453,8 @@ export const createTreasuryTransfer = createServerFn({ method: 'POST' })
   .validator(
     z.object({
       amount: amountSchema,
-      destination: z.string().trim().min(3).max(160),
+      destination: addressSchema,
+      reason: z.string().trim().min(3).max(250),
     }),
   )
   .handler(async ({ data }) => {
@@ -443,8 +462,23 @@ export const createTreasuryTransfer = createServerFn({ method: 'POST' })
     await getDb().insert(treasuryTransfers).values({
       amount: data.amount,
       destination: data.destination,
+      reason: data.reason,
       createdBy: admin.id,
     })
+    return { success: true }
+  })
+
+export const registerTreasuryReturn = createServerFn({ method: 'POST' })
+  .validator(
+    z.object({
+      amount: amountSchema,
+      txHash: referenceSchema,
+      reason: z.string().trim().min(3).max(250),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const admin = await requireAdmin()
+    await recordTreasuryReturn({ ...data, actorUserId: admin.id })
     return { success: true }
   })
 
@@ -538,21 +572,11 @@ export const reviewWithdrawal = createServerFn({ method: 'POST' })
         )
         .returning({ id: withdrawals.id })
       if (result.length !== 1) throw new Error('Broadcast withdrawal not found')
-    } else {
-      const result = await getDb()
-        .update(withdrawals)
-        .set({
-          status: 'REJECTED',
-          rejectionReason: data.reference || 'Rejected by administrator',
-          reviewedBy: admin.id,
-          reviewedAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .where(
-          sql`${withdrawals.id} = ${data.withdrawalId} and ${withdrawals.status} = 'REQUESTED'`,
-        )
-        .returning({ id: withdrawals.id })
-      if (result.length !== 1) throw new Error('Requested withdrawal not found')
-    }
+    } else
+      await releaseApprovedWithdrawal(
+        data.withdrawalId,
+        admin.id,
+        data.reference || 'Rejected by administrator',
+      )
     return { success: true }
   })

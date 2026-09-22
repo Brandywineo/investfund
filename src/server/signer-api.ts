@@ -44,3 +44,9 @@ export async function requestWithdrawalBroadcast(withdrawalId: string) {
     await signerRequest('/withdraw', { withdrawalId }),
   )
 }
+
+export async function requestTreasuryBroadcast(transferId: string) {
+  return transactionResponse.parse(
+    await signerRequest('/treasury', { transferId }),
+  )
+}

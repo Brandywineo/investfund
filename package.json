@@ -21,6 +21,7 @@
     "admin:promote": "node scripts/promote-admin.mjs",
     "accrual:run": "tsx scripts/run-daily-accruals.ts",
     "wallet:create": "tsx scripts/create-hd-wallet.ts",
+    "wallet:inspect": "tsx scripts/inspect-hd-wallet.ts",
     "signer:start": "tsx scripts/hd-signer-service.ts",
     "chain:run": "tsx scripts/run-chain-worker.ts"
   },

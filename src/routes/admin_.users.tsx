@@ -61,11 +61,13 @@ function UsersPage() {
           </p>
         )}
         <div className="mt-8 overflow-x-auto rounded-[2rem] bg-white ring-1 ring-black/5">
-          <table className="w-full min-w-[760px] text-left">
+          <table className="w-full min-w-[1100px] text-left">
             <thead className="border-b border-black/6 text-xs uppercase tracking-[.12em] text-[#6e857a]">
               <tr>
                 <th className="p-5">User</th>
                 <th>Joined</th>
+                <th>Permanent deposit address</th>
+                <th>Confirmed activity</th>
                 <th>Role</th>
                 <th>Status</th>
                 <th className="pr-5 text-right">Action</th>
@@ -83,6 +85,35 @@ function UsersPage() {
                   </td>
                   <td className="text-sm text-[#6e857a]">
                     {new Date(user.createdAt).toLocaleDateString()}
+                  </td>
+                  <td className="max-w-72 pr-4 text-xs">
+                    {user.depositAddress ? (
+                      <div>
+                        <button
+                          type="button"
+                          title="Copy address"
+                          onClick={() =>
+                            void navigator.clipboard.writeText(
+                              user.depositAddress || '',
+                            )
+                          }
+                          className="block max-w-64 truncate font-mono font-semibold hover:underline"
+                        >
+                          {user.depositAddress}
+                        </button>
+                        <span className="text-[#6e857a]">
+                          Index {user.derivationIndex} · {user.addressStatus}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-[#6e857a]">Not issued yet</span>
+                    )}
+                  </td>
+                  <td className="pr-4 text-xs text-[#6e857a]">
+                    <b className="block text-[#10251c]">
+                      +{Number(user.confirmedDeposits).toFixed(2)} USDT
+                    </b>
+                    −{Number(user.confirmedWithdrawals).toFixed(2)} USDT
                   </td>
                   <td>
                     <select

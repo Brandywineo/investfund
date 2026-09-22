@@ -110,6 +110,8 @@ function WalletPage() {
               <input
                 name="amount"
                 inputMode="decimal"
+                min={Number(data.settings.minimumWithdrawalAmount)}
+                step="0.00000001"
                 required
                 className={input}
               />
@@ -125,7 +127,9 @@ function WalletPage() {
               Request withdrawal
             </button>
             <p className="mt-4 text-xs text-[#6e857a]">
-              Requested funds are reserved only after administrator approval.
+              Minimum {Number(data.settings.minimumWithdrawalAmount).toFixed(2)}{' '}
+              USDT. Funds are locked immediately, then sent automatically after
+              administrator approval.
             </p>
           </form>
         </div>

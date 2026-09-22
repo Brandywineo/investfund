@@ -6,6 +6,7 @@ import {
   JsonRpcProvider,
   formatUnits,
   isAddress,
+  keccak256,
   parseUnits,
 } from 'ethers'
 import { and, eq } from 'drizzle-orm'
@@ -14,11 +15,15 @@ import {
   custodySettings,
   walletAddresses,
   walletSweeps,
+  treasuryTransfers,
   withdrawals,
 } from '../src/db/schema'
 import type { EncryptedMnemonic } from '../src/server/hd-wallet-crypto'
 import { decryptMnemonic } from '../src/server/hd-wallet-crypto'
-import { broadcastWithdrawal } from '../src/server/custody.service'
+import {
+  broadcastTreasuryTransfer,
+  broadcastWithdrawal,
+} from '../src/server/custody.service'
 
 const ERC20_ABI = [
   'function balanceOf(address) view returns (uint256)',
@@ -45,6 +50,51 @@ const provider = new JsonRpcProvider(rpcUrl)
 const hotWallet = root.derivePath('1/0').connect(provider)
 const gasWallet = root.derivePath('1/1').connect(provider)
 
+async function signTokenTransfer(
+  tokenAddress: string,
+  destination: string,
+  rawAmount: string,
+) {
+  const token = new Contract(tokenAddress, ERC20_ABI, hotWallet)
+  const decimals = Number(await token.decimals())
+  const populated = await token.transfer.populateTransaction(
+    destination,
+    parseUnits(rawAmount, decimals),
+  )
+  const [network, fee, nonce] = await Promise.all([
+    provider.getNetwork(),
+    provider.getFeeData(),
+    provider.getTransactionCount(hotWallet.address, 'pending'),
+  ])
+  const gasLimit = await provider.estimateGas({
+    ...populated,
+    from: hotWallet.address,
+  })
+  const gasPrice = fee.gasPrice ?? fee.maxFeePerGas
+  if (!gasPrice) throw new Error('Could not determine network gas price')
+  const signedTransaction = await hotWallet.signTransaction({
+    ...populated,
+    chainId: network.chainId,
+    nonce,
+    gasLimit: (gasLimit * 125n) / 100n,
+    gasPrice,
+  })
+  return {
+    nonce,
+    signedTransaction,
+    txHash: keccak256(signedTransaction),
+  }
+}
+
+async function safelyBroadcast(signedTransaction: string, txHash: string) {
+  try {
+    await provider.broadcastTransaction(signedTransaction)
+  } catch (cause) {
+    const known = await provider.getTransaction(txHash).catch(() => null)
+    if (!known) throw cause
+  }
+}
+
 async function sweep(walletAddressId: string, force = false) {
   const db = getDb()
   const [addressRow, settings] = await Promise.all([
@@ -68,7 +118,6 @@ async function sweep(walletAddressId: string, force = false) {
     !isAddress(settings.tokenContractAddress)
   )
     throw new Error('USDT contract is not configured')
-
   const child = root
     .derivePath(`0/${addressRow.derivationIndex}`)
     .connect(provider)
@@ -150,13 +199,11 @@ async function sweep(walletAddressId: string, force = false) {
 
 async function withdraw(withdrawalId: string) {
   const db = getDb()
-  const withdrawal = await db
-    .update(withdrawals)
-    .set({ status: 'PROCESSING', updatedAt: new Date() })
-    .where(
-      and(eq(withdrawals.id, withdrawalId), eq(withdrawals.status, 'APPROVED')),
-    )
-    .returning()
+  let withdrawal = await db
+    .select()
+    .from(withdrawals)
+    .where(eq(withdrawals.id, withdrawalId))
+    .limit(1)
     .then((rows) => rows.at(0))
   const settings = await db
     .select()
@@ -164,7 +211,8 @@ async function withdraw(withdrawalId: string) {
     .where(eq(custodySettings.id, 1))
     .limit(1)
     .then((rows) => rows.at(0))
-  if (!withdrawal) throw new Error('Approved withdrawal not found')
+  if (!withdrawal || !['APPROVED', 'PROCESSING'].includes(withdrawal.status))
+    throw new Error('Approved or processing withdrawal not found')
   if (!isAddress(withdrawal.destinationAddress))
     throw new Error('Withdrawal address is invalid')
   if (
@@ -172,34 +220,45 @@ async function withdraw(withdrawalId: string) {
     !isAddress(settings.tokenContractAddress)
   )
     throw new Error('USDT contract is not configured')
+  const originalWithdrawal = withdrawal
 
-  const token = new Contract(
-    settings.tokenContractAddress,
-    ERC20_ABI,
-    hotWallet,
-  )
-  const decimals = Number(await token.decimals())
-  const amount = parseUnits(withdrawal.amount, decimals)
-  let txHash: string | undefined
   try {
-    const transaction = await token.transfer(
-      withdrawal.destinationAddress,
-      amount,
-    )
-    const broadcastHash = String(transaction.hash)
-    txHash = broadcastHash
-    await db
-      .update(withdrawals)
-      .set({ txHash, broadcastAt: new Date(), updatedAt: new Date() })
-      .where(eq(withdrawals.id, withdrawal.id))
+    if (originalWithdrawal.status === 'APPROVED') {
+      const prepared = await signTokenTransfer(
+        settings.tokenContractAddress,
+        withdrawal.destinationAddress,
+        withdrawal.amount,
+      )
+      withdrawal = await db
+        .update(withdrawals)
+        .set({
+          status: 'PROCESSING',
+          signedTransaction: prepared.signedTransaction,
+          chainNonce: prepared.nonce,
+          txHash: prepared.txHash,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(withdrawals.id, withdrawal.id),
+            eq(withdrawals.status, 'APPROVED'),
+          ),
+        )
+        .returning()
+        .then((rows) => rows.at(0))
+      if (!withdrawal) throw new Error('Withdrawal is already being processed')
+    }
+    if (!withdrawal.signedTransaction || !withdrawal.txHash)
+      throw new Error('Processing withdrawal has no signed transaction')
+    await safelyBroadcast(withdrawal.signedTransaction, withdrawal.txHash)
     await broadcastWithdrawal(
       withdrawal.id,
-      broadcastHash,
+      withdrawal.txHash,
       withdrawal.reviewedBy!,
     )
-    return { txHash: broadcastHash, amount: withdrawal.amount }
+    return { txHash: withdrawal.txHash, amount: withdrawal.amount }
   } catch (cause) {
-    if (!txHash) {
+    if (originalWithdrawal.status === 'APPROVED') {
       await db
         .update(withdrawals)
         .set({
@@ -210,8 +269,84 @@ async function withdraw(withdrawalId: string) {
               : 'Withdrawal signing failed',
           updatedAt: new Date(),
         })
-        .where(eq(withdrawals.id, withdrawal.id))
+        .where(eq(withdrawals.id, originalWithdrawal.id))
     }
+    throw cause
+  }
+}
+
+async function treasury(transferId: string) {
+  const db = getDb()
+  let transfer = await db
+    .select()
+    .from(treasuryTransfers)
+    .where(eq(treasuryTransfers.id, transferId))
+    .limit(1)
+    .then((rows) => rows.at(0))
+  if (!transfer || !['APPROVED', 'PROCESSING'].includes(transfer.status))
+    throw new Error('Approved or processing treasury transfer not found')
+  if (transfer.direction !== 'OUTBOUND')
+    throw new Error('Only outbound treasury transfers can be broadcast')
+  if (!isAddress(transfer.destination))
+    throw new Error('Treasury destination address is invalid')
+  const settings = await db
+    .select()
+    .from(custodySettings)
+    .where(eq(custodySettings.id, 1))
+    .limit(1)
+    .then((rows) => rows.at(0))
+  if (
+    !settings?.tokenContractAddress ||
+    !isAddress(settings.tokenContractAddress)
+  )
+    throw new Error('USDT contract is not configured')
+  const originalTransfer = transfer
+  try {
+    if (transfer.status === 'APPROVED') {
+      const prepared = await signTokenTransfer(
+        settings.tokenContractAddress,
+        transfer.destination,
+        transfer.amount,
+      )
+      transfer = await db
+        .update(treasuryTransfers)
+        .set({
+          status: 'PROCESSING',
+          signedTransaction: prepared.signedTransaction,
+          chainNonce: prepared.nonce,
+          txHash: prepared.txHash,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(treasuryTransfers.id, transfer.id),
+            eq(treasuryTransfers.status, 'APPROVED'),
+          ),
+        )
+        .returning()
+        .then((rows) => rows.at(0))
+      if (!transfer) throw new Error('Treasury transfer is already processing')
+    }
+    if (!transfer.signedTransaction || !transfer.txHash)
+      throw new Error('Processing treasury transfer has no signed transaction')
+    await safelyBroadcast(transfer.signedTransaction, transfer.txHash)
+    await broadcastTreasuryTransfer(
+      transfer.id,
+      transfer.txHash,
+      transfer.createdBy,
+    )
+    return { txHash: transfer.txHash, amount: transfer.amount }
+  } catch (cause) {
+    if (originalTransfer.status === 'APPROVED')
+      await db
+        .update(treasuryTransfers)
+        .set({
+          status: 'FAILED',
+          failureReason:
+            cause instanceof Error ? cause.message : 'Treasury signing failed',
+          updatedAt: new Date(),
+        })
+        .where(eq(treasuryTransfers.id, originalTransfer.id))
     throw cause
   }
 }
@@ -241,6 +376,8 @@ const server = createServer(async (request, response) => {
       result = await sweep(String(body.walletAddressId), body.force === true)
     } else if (request.method === 'POST' && request.url === '/withdraw') {
       result = await withdraw(String(body.withdrawalId))
+    } else if (request.method === 'POST' && request.url === '/treasury') {
+      result = await treasury(String(body.transferId))
     } else {
       response.writeHead(404, { 'content-type': 'application/json' })
       response.end(JSON.stringify({ error: 'Not found' }))

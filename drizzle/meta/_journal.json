@@ -57,6 +57,13 @@
       "when": 1790005020169,
       "tag": "0007_fine_doctor_faustus",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790051311888,
+      "tag": "0008_smart_magneto",
+      "breakpoints": true
     }
   ]
 }

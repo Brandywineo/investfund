@@ -1,9 +1,8 @@
-import { eq, like, sql } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import type { Database } from '#/db'
 import { getDb } from '#/db'
 import {
   auditLogs,
-  custodySettings,
   deposits,
   ledgerAccounts,
   ledgerEntries,
@@ -11,10 +10,6 @@ import {
   withdrawals,
 } from '#/db/schema'
 import { money } from '#/domain/money'
-import {
-  availableTreasuryLiquidity,
-  reserveRequirement,
-} from '#/domain/treasury'
 import { postLedgerTransaction } from './ledger.service'
 
 type TransactionExecutor = Parameters<Parameters<Database['transaction']>[0]>[0]
@@ -118,6 +113,9 @@ export async function approveWithdrawal(
   actorUserId: string,
 ) {
   return getDb().transaction(async (tx) => {
+    await tx.execute(
+      sql`select id from withdrawals where id = ${withdrawalId} for update`,
+    )
     const withdrawal = await tx
       .select()
       .from(withdrawals)
@@ -126,50 +124,24 @@ export async function approveWithdrawal(
       .then((rows) => rows.at(0))
     if (!withdrawal || withdrawal.status !== 'REQUESTED')
       throw new Error('Requested withdrawal not found')
-    const available = await account(tx, `USER:${withdrawal.userId}:AVAILABLE`)
-    const reserved = await account(tx, 'PLATFORM:WITHDRAWAL_RESERVED')
     const hotWallet = await account(tx, 'PLATFORM:HOT_WALLET')
     await tx.execute(
-      sql`select id from ledger_accounts where id in (${available}, ${hotWallet}) for update`,
+      sql`select id from ledger_accounts where id = ${hotWallet} for update`,
     )
-    if (
-      money(await balance(tx, available, 'CREDIT')).lessThan(withdrawal.amount)
-    )
-      throw new Error('User has insufficient available balance')
+    if (!withdrawal.reservationLedgerTransactionId)
+      throw new Error('Withdrawal funds have not been reserved')
     if (
       money(await balance(tx, hotWallet, 'DEBIT')).lessThan(withdrawal.amount)
     )
       throw new Error(
         'Hot-wallet liquidity is insufficient; leave this request queued',
       )
-    const ledger = await postLedgerTransaction(tx, {
-      eventType: 'WITHDRAWAL_RESERVED',
-      referenceType: 'withdrawal',
-      referenceId: withdrawal.id,
-      idempotencyKey: `withdrawal:${withdrawal.id}:reserved`,
-      description: 'Reserve user funds for approved withdrawal',
-      effectiveAt: new Date(),
-      createdBy: actorUserId,
-      lines: [
-        {
-          accountId: available,
-          side: 'DEBIT',
-          amount: money(withdrawal.amount),
-        },
-        {
-          accountId: reserved,
-          side: 'CREDIT',
-          amount: money(withdrawal.amount),
-        },
-      ],
-    })
     await tx
       .update(withdrawals)
       .set({
         status: 'APPROVED',
         reviewedBy: actorUserId,
         reviewedAt: new Date(),
-        reservationLedgerTransactionId: ledger.id,
         updatedAt: new Date(),
       })
       .where(eq(withdrawals.id, withdrawal.id))
@@ -182,6 +154,59 @@ export async function approveWithdrawal(
       { status: withdrawal.status },
       { status: 'APPROVED', amount: withdrawal.amount },
     )
+  })
+}
+
+export async function reserveWithdrawalRequest(input: {
+  userId: string
+  amount: string
+  destinationAddress: string
+  network: string
+}) {
+  return getDb().transaction(async (tx) => {
+    const available = await account(tx, `USER:${input.userId}:AVAILABLE`)
+    const reserved = await account(tx, 'PLATFORM:WITHDRAWAL_RESERVED')
+    await tx.execute(
+      sql`select id from ledger_accounts where id in (${available}, ${reserved}) for update`,
+    )
+    if (money(await balance(tx, available, 'CREDIT')).lessThan(input.amount))
+      throw new Error('Insufficient available balance')
+    const withdrawal = await tx
+      .insert(withdrawals)
+      .values(input)
+      .returning({ id: withdrawals.id })
+      .then((rows) => rows.at(0))
+    if (!withdrawal) throw new Error('Could not create withdrawal request')
+    const ledger = await postLedgerTransaction(tx, {
+      eventType: 'WITHDRAWAL_RESERVED',
+      referenceType: 'withdrawal',
+      referenceId: withdrawal.id,
+      idempotencyKey: `withdrawal:${withdrawal.id}:reserved`,
+      description: 'Lock user funds for withdrawal review',
+      effectiveAt: new Date(),
+      lines: [
+        { accountId: available, side: 'DEBIT', amount: money(input.amount) },
+        { accountId: reserved, side: 'CREDIT', amount: money(input.amount) },
+      ],
+    })
+    await tx
+      .update(withdrawals)
+      .set({ reservationLedgerTransactionId: ledger.id, updatedAt: new Date() })
+      .where(eq(withdrawals.id, withdrawal.id))
+    await audit(
+      tx,
+      input.userId,
+      'WITHDRAWAL_REQUESTED',
+      'withdrawal',
+      withdrawal.id,
+      null,
+      {
+        status: 'REQUESTED',
+        amount: input.amount,
+        destinationAddress: input.destinationAddress,
+      },
+    )
+    return withdrawal
   })
 }
 
@@ -256,43 +281,15 @@ export async function broadcastTreasuryTransfer(
       .where(eq(treasuryTransfers.id, transferId))
       .limit(1)
       .then((rows) => rows.at(0))
-    if (!transfer || transfer.status !== 'APPROVED')
-      throw new Error('Approved treasury transfer not found')
-    const settings = await tx
-      .select()
-      .from(custodySettings)
-      .where(eq(custodySettings.id, 1))
-      .limit(1)
-      .then((rows) => rows.at(0))
-    if (!settings) throw new Error('Custody settings are not initialized')
+    if (!transfer || transfer.status !== 'PROCESSING')
+      throw new Error('Processing treasury transfer not found')
     const hotWallet = await account(tx, 'PLATFORM:HOT_WALLET')
     const inTransit = await account(tx, 'PLATFORM:TREASURY_IN_TRANSIT')
-    const reserved = await account(tx, 'PLATFORM:WITHDRAWAL_RESERVED')
     await tx.execute(
       sql`select id from ledger_accounts where id = ${hotWallet} for update`,
     )
-    const withdrawable = await tx
-      .select({
-        value: sql<string>`coalesce(sum(${ledgerEntries.credit} - ${ledgerEntries.debit}), 0)`,
-      })
-      .from(ledgerEntries)
-      .innerJoin(ledgerAccounts, eq(ledgerAccounts.id, ledgerEntries.accountId))
-      .where(like(ledgerAccounts.code, 'USER:%:AVAILABLE'))
-      .then((rows) => rows.at(0)?.value ?? '0')
-    const requirement = reserveRequirement(
-      withdrawable,
-      settings.reserveFixed,
-      settings.reservePercent,
-    )
-    const transferable = availableTreasuryLiquidity(
-      await balance(tx, hotWallet, 'DEBIT'),
-      await balance(tx, reserved, 'CREDIT'),
-      requirement.toString(),
-    )
-    if (transferable.lessThan(transfer.amount))
-      throw new Error(
-        `Transfer would breach the withdrawal reserve; available ${transferable.toFixed(2)} USDT`,
-      )
+    if (money(await balance(tx, hotWallet, 'DEBIT')).lessThan(transfer.amount))
+      throw new Error('Hot-wallet ledger balance is insufficient')
     const ledger = await postLedgerTransaction(tx, {
       eventType: 'TREASURY_TRANSFER_BROADCAST',
       referenceType: 'treasury_transfer',
@@ -328,6 +325,57 @@ export async function broadcastTreasuryTransfer(
       transfer.id,
       { status: transfer.status },
       { status: 'BROADCAST', txHash, amount: transfer.amount },
+    )
+  })
+}
+
+export async function failBroadcastTreasuryTransfer(transferId: string) {
+  return getDb().transaction(async (tx) => {
+    const transfer = await tx
+      .select()
+      .from(treasuryTransfers)
+      .where(eq(treasuryTransfers.id, transferId))
+      .limit(1)
+      .then((rows) => rows.at(0))
+    if (!transfer || transfer.status !== 'BROADCAST')
+      throw new Error('Broadcast treasury transfer not found')
+    const hotWallet = await account(tx, 'PLATFORM:HOT_WALLET')
+    const inTransit = await account(tx, 'PLATFORM:TREASURY_IN_TRANSIT')
+    await postLedgerTransaction(tx, {
+      eventType: 'TREASURY_TRANSFER_REVERTED',
+      referenceType: 'treasury_transfer',
+      referenceId: transfer.id,
+      idempotencyKey: `treasury:${transfer.id}:reverted`,
+      description: 'Restore hot-wallet ledger after reverted treasury transfer',
+      effectiveAt: new Date(),
+      lines: [
+        { accountId: hotWallet, side: 'DEBIT', amount: money(transfer.amount) },
+        {
+          accountId: inTransit,
+          side: 'CREDIT',
+          amount: money(transfer.amount),
+        },
+      ],
+    })
+    await tx
+      .update(treasuryTransfers)
+      .set({
+        status: 'FAILED',
+        failureReason: 'Blockchain transaction reverted',
+        updatedAt: new Date(),
+      })
+      .where(eq(treasuryTransfers.id, transfer.id))
+    await audit(
+      tx,
+      undefined,
+      'TREASURY_TRANSFER_REVERTED',
+      'treasury_transfer',
+      transfer.id,
+      { status: 'BROADCAST' },
+      {
+        status: 'FAILED',
+        txHash: transfer.txHash,
+      },
     )
   })
 }
@@ -467,7 +515,7 @@ export async function advanceTreasuryStatus(
   transferId: string,
   from: 'DRAFTED' | 'BROADCAST' | 'BROKER_CREDITED',
   to: 'APPROVED' | 'CONFIRMED' | 'RECONCILED',
-  actorUserId: string,
+  actorUserId?: string,
 ) {
   return getDb().transaction(async (tx) => {
     const transfer = await tx
@@ -483,6 +531,7 @@ export async function advanceTreasuryStatus(
       .update(treasuryTransfers)
       .set({
         status: to,
+        ...(to === 'CONFIRMED' ? { confirmedAt: new Date() } : {}),
         ...(to === 'RECONCILED' ? { reconciledAt: new Date() } : {}),
         updatedAt: new Date(),
       })
@@ -499,19 +548,119 @@ export async function advanceTreasuryStatus(
   })
 }
 
+export async function recordTreasuryReturn(input: {
+  amount: string
+  txHash: string
+  reason: string
+  actorUserId: string
+}) {
+  return getDb().transaction(async (tx) => {
+    const existing = await tx
+      .select({ id: treasuryTransfers.id })
+      .from(treasuryTransfers)
+      .where(eq(treasuryTransfers.txHash, input.txHash))
+      .limit(1)
+      .then((rows) => rows.at(0))
+    if (existing) throw new Error('This transaction hash is already recorded')
+    const hotWallet = await account(tx, 'PLATFORM:HOT_WALLET')
+    const broker = await account(tx, 'PLATFORM:BROKER_TREASURY')
+    const tradingProfit = await account(tx, 'PLATFORM:TRADING_PROFIT')
+    await tx.execute(
+      sql`select id from ledger_accounts where id in (${hotWallet}, ${broker}) for update`,
+    )
+    const brokerBalance = money(await balance(tx, broker, 'DEBIT'))
+    const returned = money(input.amount)
+    const principalReturned = brokerBalance.lessThan(returned)
+      ? brokerBalance
+      : returned
+    const profitReturned = returned.minus(principalReturned)
+    const transfer = await tx
+      .insert(treasuryTransfers)
+      .values({
+        amount: input.amount,
+        destination: 'PLATFORM_HOT_WALLET',
+        direction: 'RETURN',
+        reason: input.reason,
+        status: 'CONFIRMED',
+        txHash: input.txHash,
+        createdBy: input.actorUserId,
+        broadcastAt: new Date(),
+        confirmedAt: new Date(),
+      })
+      .returning({ id: treasuryTransfers.id })
+      .then((rows) => rows.at(0))
+    if (!transfer) throw new Error('Could not record treasury return')
+    const ledger = await postLedgerTransaction(tx, {
+      eventType: 'BROKER_TREASURY_RETURNED',
+      referenceType: 'treasury_transfer',
+      referenceId: transfer.id,
+      idempotencyKey: `treasury:${transfer.id}:returned`,
+      description: input.reason,
+      effectiveAt: new Date(),
+      createdBy: input.actorUserId,
+      lines: [
+        { accountId: hotWallet, side: 'DEBIT', amount: returned },
+        ...(principalReturned.greaterThan(0)
+          ? [
+              {
+                accountId: broker,
+                side: 'CREDIT' as const,
+                amount: principalReturned,
+              },
+            ]
+          : []),
+        ...(profitReturned.greaterThan(0)
+          ? [
+              {
+                accountId: tradingProfit,
+                side: 'CREDIT' as const,
+                amount: profitReturned,
+              },
+            ]
+          : []),
+      ],
+    })
+    await tx
+      .update(treasuryTransfers)
+      .set({ hotWalletLedgerTransactionId: ledger.id, updatedAt: new Date() })
+      .where(eq(treasuryTransfers.id, transfer.id))
+    await audit(
+      tx,
+      input.actorUserId,
+      'BROKER_TREASURY_RETURNED',
+      'treasury_transfer',
+      transfer.id,
+      null,
+      {
+        amount: input.amount,
+        txHash: input.txHash,
+        reason: input.reason,
+      },
+    )
+    return transfer
+  })
+}
+
 export async function releaseApprovedWithdrawal(
   withdrawalId: string,
   actorUserId: string,
   reason: string,
+  finalStatus?: 'REJECTED' | 'CANCELLED' | 'FAILED',
 ) {
   return getDb().transaction(async (tx) => {
+    await tx.execute(
+      sql`select id from withdrawals where id = ${withdrawalId} for update`,
+    )
     const withdrawal = await tx
       .select()
       .from(withdrawals)
       .where(eq(withdrawals.id, withdrawalId))
       .limit(1)
       .then((rows) => rows.at(0))
-    if (!withdrawal || !['APPROVED', 'FAILED'].includes(withdrawal.status))
+    if (
+      !withdrawal ||
+      !['REQUESTED', 'APPROVED', 'FAILED'].includes(withdrawal.status)
+    )
       throw new Error('Releasable withdrawal not found')
     const available = await account(tx, `USER:${withdrawal.userId}:AVAILABLE`)
     const reserved = await account(tx, 'PLATFORM:WITHDRAWAL_RESERVED')
@@ -536,10 +685,12 @@ export async function releaseApprovedWithdrawal(
         },
       ],
     })
+    const releasedStatus =
+      finalStatus ?? (withdrawal.status === 'REQUESTED' ? 'REJECTED' : 'FAILED')
     await tx
       .update(withdrawals)
       .set({
-        status: 'FAILED',
+        status: releasedStatus,
         rejectionReason: reason,
         updatedAt: new Date(),
       })
@@ -551,7 +702,7 @@ export async function releaseApprovedWithdrawal(
       'withdrawal',
       withdrawal.id,
       { status: withdrawal.status },
-      { status: 'FAILED', reason },
+      { status: releasedStatus, reason },
     )
   })
 }

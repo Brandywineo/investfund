@@ -10,6 +10,7 @@ import {
   advanceTreasuryTransfer,
   createTreasuryTransfer,
   getCustodyDashboard,
+  registerTreasuryReturn,
   reviewDeposit,
   reviewWithdrawal,
   sweepWalletAddress,
@@ -64,6 +65,7 @@ function CustodyAdminPage() {
             tokenContractAddress: String(f.get('tokenContract')),
             autoSweepEnabled: f.get('autoSweep') === 'on',
             minimumSweepAmount: Number(f.get('minimumSweep')),
+            minimumWithdrawalAmount: Number(f.get('minimumWithdrawal')),
           },
         }),
       'Custody settings updated.',
@@ -78,9 +80,25 @@ function CustodyAdminPage() {
           data: {
             amount: String(f.get('amount')),
             destination: String(f.get('destination')),
+            reason: String(f.get('reason')),
           },
         }),
       'Treasury transfer drafted.',
+    )
+  }
+  function treasuryReturn(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const f = new FormData(event.currentTarget)
+    return run(
+      () =>
+        registerTreasuryReturn({
+          data: {
+            amount: String(f.get('amount')),
+            txHash: String(f.get('txHash')),
+            reason: String(f.get('reason')),
+          },
+        }),
+      'MT5 return recorded in platform liquidity.',
     )
   }
   const input =
@@ -212,6 +230,16 @@ function CustodyAdminPage() {
                   className={input}
                 />
               </label>
+              <label className="text-sm font-semibold">
+                Minimum withdrawal
+                <input
+                  name="minimumWithdrawal"
+                  type="number"
+                  step="0.01"
+                  defaultValue={data.settings.minimumWithdrawalAmount}
+                  className={input}
+                />
+              </label>
               <label className="flex items-center gap-3 text-sm font-semibold sm:col-span-2">
                 <input
                   name="autoSweep"
@@ -232,7 +260,7 @@ function CustodyAdminPage() {
             onSubmit={transfer}
             className="rounded-[2rem] bg-[#123d2d] p-6 text-white"
           >
-            <h2 className="text-xl font-semibold">Draft MT5 transfer</h2>
+            <h2 className="text-xl font-semibold">Send to MT5 treasury</h2>
             <label className="mt-5 block text-sm font-semibold">
               Amount
               <input
@@ -242,11 +270,20 @@ function CustodyAdminPage() {
               />
             </label>
             <label className="mt-4 block text-sm font-semibold">
-              Broker destination/reference
+              Destination BEP20 wallet
               <input
                 name="destination"
                 required
-                placeholder="MT5 account or broker destination"
+                placeholder="0x..."
+                className={`${input} text-[#10251c]`}
+              />
+            </label>
+            <label className="mt-4 block text-sm font-semibold">
+              Reason
+              <input
+                name="reason"
+                required
+                placeholder="Capital allocation to MT5 account..."
                 className={`${input} text-[#10251c]`}
               />
             </label>
@@ -254,14 +291,47 @@ function CustodyAdminPage() {
               disabled={busy}
               className="mt-5 w-full rounded-xl bg-[#d9ff71] py-3 font-bold text-[#123d2d]"
             >
-              Create draft
+              Review transfer
             </button>
             <p className="mt-3 text-xs text-white/55">
-              Drafting does not move funds. Broadcasting requires a TXID and
-              reserve validation.
+              Treasury transfers are unrestricted but fully audited. Approval
+              broadcasts automatically through the isolated signer.
             </p>
           </form>
         </div>
+        <form
+          onSubmit={treasuryReturn}
+          className="mt-5 rounded-[2rem] bg-white p-6 ring-1 ring-black/5"
+        >
+          <h2 className="text-xl font-semibold">
+            Record MT5 capital or profit return
+          </h2>
+          <div className="mt-4 grid gap-4 md:grid-cols-3">
+            <label className="text-sm font-semibold">
+              Amount
+              <input name="amount" required className={input} />
+            </label>
+            <label className="text-sm font-semibold">
+              Incoming blockchain TXID
+              <input name="txHash" required className={input} />
+            </label>
+            <label className="text-sm font-semibold">
+              Reason
+              <input
+                name="reason"
+                required
+                placeholder="MT5 capital and profit return"
+                className={input}
+              />
+            </label>
+          </div>
+          <button
+            disabled={busy}
+            className="mt-5 rounded-xl bg-[#123d2d] px-6 py-3 font-bold text-white"
+          >
+            Record confirmed return
+          </button>
+        </form>
         <Queue title="Deposits">
           {data.deposits.map((item) => (
             <Row
@@ -438,7 +508,7 @@ function CustodyAdminPage() {
               key={item.id}
               title={item.userEmail}
               status={item.status}
-              detail={item.address}
+              detail={`${item.address} · derivation index ${item.derivationIndex}`}
             >
               <button
                 disabled={busy}
@@ -475,9 +545,7 @@ function CustodyAdminPage() {
               key={item.id}
               title={`${Number(item.amount).toFixed(2)} USDT · ${item.destination}`}
               status={item.status}
-              detail={
-                item.txHash || item.brokerReference || 'No movement recorded'
-              }
+              detail={`${item.direction} · ${item.reason} · ${item.txHash || item.brokerReference || 'No movement recorded'}`}
             >
               <div className="grid min-w-52 gap-2">
                 {item.status === 'DRAFTED' && (
@@ -493,7 +561,7 @@ function CustodyAdminPage() {
                               reference: 'approved',
                             },
                           }),
-                        'Treasury transfer approved.',
+                        'Treasury transfer approved and queued for automatic broadcast.',
                       )
                     }
                     className="action"
@@ -501,75 +569,38 @@ function CustodyAdminPage() {
                     Approve transfer
                   </button>
                 )}
-                {item.status === 'APPROVED' && (
-                  <>
-                    {refInput(item.id, 'Blockchain TXID')}
-                    <button
-                      disabled={busy}
-                      onClick={() =>
-                        void run(
-                          () =>
-                            advanceTreasuryTransfer({
-                              data: {
-                                transferId: item.id,
-                                action: 'BROADCAST',
-                                reference: refs[item.id],
-                              },
-                            }),
-                          'Treasury broadcast recorded.',
-                        )
-                      }
-                      className="action"
-                    >
-                      Broadcast to broker
-                    </button>
-                  </>
+                {['APPROVED', 'PROCESSING', 'BROADCAST'].includes(
+                  item.status,
+                ) && (
+                  <p className="rounded-lg bg-amber-50 p-2 text-xs text-amber-800">
+                    Signer/chain confirmation in progress…
+                  </p>
                 )}
-                {item.status === 'BROADCAST' && (
-                  <button
-                    disabled={busy}
-                    onClick={() =>
-                      void run(
-                        () =>
-                          advanceTreasuryTransfer({
-                            data: {
-                              transferId: item.id,
-                              action: 'CHAIN_CONFIRM',
-                              reference: 'confirmed',
-                            },
-                          }),
-                        'Blockchain confirmation recorded.',
-                      )
-                    }
-                    className="action"
-                  >
-                    Confirm on-chain
-                  </button>
-                )}
-                {item.status === 'CONFIRMED' && (
-                  <>
-                    {refInput(item.id, 'MT5/broker reference')}
-                    <button
-                      disabled={busy}
-                      onClick={() =>
-                        void run(
-                          () =>
-                            advanceTreasuryTransfer({
-                              data: {
-                                transferId: item.id,
-                                action: 'BROKER_CREDIT',
-                                reference: refs[item.id],
-                              },
-                            }),
-                          'Broker credit recorded.',
-                        )
-                      }
-                      className="action"
-                    >
-                      Confirm broker credit
-                    </button>
-                  </>
-                )}
+                {item.direction === 'OUTBOUND' &&
+                  item.status === 'CONFIRMED' && (
+                    <>
+                      {refInput(item.id, 'MT5/broker reference')}
+                      <button
+                        disabled={busy}
+                        onClick={() =>
+                          void run(
+                            () =>
+                              advanceTreasuryTransfer({
+                                data: {
+                                  transferId: item.id,
+                                  action: 'BROKER_CREDIT',
+                                  reference: refs[item.id],
+                                },
+                              }),
+                            'Broker credit recorded.',
+                          )
+                        }
+                        className="action"
+                      >
+                        Confirm broker credit
+                      </button>
+                    </>
+                  )}
                 {item.status === 'BROKER_CREDITED' && (
                   <button
                     disabled={busy}

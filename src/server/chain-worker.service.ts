@@ -16,14 +16,20 @@ import {
   deposits,
   walletAddresses,
   walletSweeps,
+  treasuryTransfers,
   withdrawals,
 } from '#/db/schema'
 import {
-  broadcastWithdrawal,
+  advanceTreasuryStatus,
   confirmDeposit,
+  failBroadcastTreasuryTransfer,
   settleBroadcastWithdrawal,
 } from './custody.service'
-import { requestWalletSweep, requestWithdrawalBroadcast } from './signer-api'
+import {
+  requestTreasuryBroadcast,
+  requestWalletSweep,
+  requestWithdrawalBroadcast,
+} from './signer-api'
 
 const TRANSFER_TOPIC = id('Transfer(address,address,uint256)')
 const TOKEN_ABI = [
@@ -252,20 +258,14 @@ export async function runChainWorker() {
 
   let withdrawalsBroadcast = 0
   const interruptedWithdrawals = await db
-    .select({
-      id: withdrawals.id,
-      txHash: withdrawals.txHash,
-      reviewedBy: withdrawals.reviewedBy,
-    })
+    .select({ id: withdrawals.id })
     .from(withdrawals)
     .where(eq(withdrawals.status, 'PROCESSING'))
   for (const withdrawal of interruptedWithdrawals) {
-    if (withdrawal.txHash && withdrawal.reviewedBy) {
-      await broadcastWithdrawal(
-        withdrawal.id,
-        withdrawal.txHash,
-        withdrawal.reviewedBy,
-      )
+    try {
+      await requestWithdrawalBroadcast(withdrawal.id)
+    } catch (cause) {
+      console.error(`Withdrawal retry ${withdrawal.id} failed`, cause)
     }
   }
   const approvedWithdrawals = await db
@@ -273,8 +273,12 @@ export async function runChainWorker() {
     .from(withdrawals)
     .where(eq(withdrawals.status, 'APPROVED'))
   for (const withdrawal of approvedWithdrawals) {
-    await requestWithdrawalBroadcast(withdrawal.id)
-    withdrawalsBroadcast += 1
+    try {
+      await requestWithdrawalBroadcast(withdrawal.id)
+      withdrawalsBroadcast += 1
+    } catch (cause) {
+      console.error(`Withdrawal ${withdrawal.id} failed`, cause)
+    }
   }
 
   const broadcastWithdrawals = await db
@@ -286,6 +290,48 @@ export async function runChainWorker() {
     const receipt = await provider.getTransactionReceipt(withdrawal.txHash)
     if (receipt)
       await settleBroadcastWithdrawal(withdrawal.id, receipt.status === 1)
+  }
+
+  const interruptedTreasury = await db
+    .select({ id: treasuryTransfers.id })
+    .from(treasuryTransfers)
+    .where(eq(treasuryTransfers.status, 'PROCESSING'))
+  for (const transfer of interruptedTreasury) {
+    try {
+      await requestTreasuryBroadcast(transfer.id)
+    } catch (cause) {
+      console.error(`Treasury retry ${transfer.id} failed`, cause)
+    }
+  }
+  const approvedTreasury = await db
+    .select({ id: treasuryTransfers.id })
+    .from(treasuryTransfers)
+    .where(eq(treasuryTransfers.status, 'APPROVED'))
+  let treasuryBroadcast = 0
+  for (const transfer of approvedTreasury) {
+    try {
+      await requestTreasuryBroadcast(transfer.id)
+      treasuryBroadcast += 1
+    } catch (cause) {
+      console.error(`Treasury transfer ${transfer.id} failed`, cause)
+    }
+  }
+  const broadcastTreasury = await db
+    .select({ id: treasuryTransfers.id, txHash: treasuryTransfers.txHash })
+    .from(treasuryTransfers)
+    .where(eq(treasuryTransfers.status, 'BROADCAST'))
+  for (const transfer of broadcastTreasury) {
+    if (!transfer.txHash) continue
+    const receipt = await provider.getTransactionReceipt(transfer.txHash)
+    if (receipt?.status === 1)
+      await advanceTreasuryStatus(
+        transfer.id,
+        'BROADCAST',
+        'CONFIRMED',
+        undefined,
+      )
+    else if (receipt?.status === 0)
+      await failBroadcastTreasuryTransfer(transfer.id)
   }
 
   await db
@@ -316,5 +362,6 @@ export async function runChainWorker() {
     credited,
     swept,
     withdrawalsBroadcast,
+    treasuryBroadcast,
   }
 }
