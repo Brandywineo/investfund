@@ -34,6 +34,7 @@ import {
 const TRANSFER_TOPIC = id('Transfer(address,address,uint256)')
 const TOKEN_ABI = [
   'event Transfer(address indexed from,address indexed to,uint256 value)',
+  'function balanceOf(address) view returns (uint256)',
   'function decimals() view returns (uint8)',
 ]
 const tokenInterface = new Interface(TOKEN_ABI)
@@ -169,6 +170,37 @@ export async function runChainWorker() {
           .where(eq(walletAddresses.id, walletAddress.id))
       }
     }
+  }
+
+  const staleBefore = Date.now() - 60_000
+  const balanceRows = addressRows
+    .filter(
+      (row) =>
+        !row.balanceCheckedAt || row.balanceCheckedAt.getTime() < staleBefore,
+    )
+    .slice(0, 20)
+  for (const addressChunk of chunks(balanceRows, 10)) {
+    await Promise.all(
+      addressChunk.map(async (addressRow) => {
+        try {
+          const [tokenBalance, nativeBalance] = await Promise.all([
+            token.balanceOf(addressRow.address) as Promise<bigint>,
+            provider.getBalance(addressRow.address),
+          ])
+          await db
+            .update(walletAddresses)
+            .set({
+              tokenBalance: formatUnits(tokenBalance, decimals),
+              nativeBalance: formatUnits(nativeBalance, 18),
+              balanceCheckedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(eq(walletAddresses.id, addressRow.id))
+        } catch (cause) {
+          console.error(`Balance check ${addressRow.id} failed`, cause)
+        }
+      }),
+    )
   }
 
   await db

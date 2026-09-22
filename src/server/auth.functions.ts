@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { getDb } from '#/db'
 import { auditLogs, ledgerAccounts, sessions, users } from '#/db/schema'
 import { hashPassword, verifyPassword } from './password'
+import { attachReferrer, ensureReferralCode } from './referral.service'
 import {
   createUserSession,
   destroyUserSession,
@@ -17,7 +18,10 @@ const credentialsSchema = z.object({
 
 export const register = createServerFn({ method: 'POST' })
   .validator(
-    credentialsSchema.extend({ displayName: z.string().trim().min(2).max(80) }),
+    credentialsSchema.extend({
+      displayName: z.string().trim().min(2).max(80),
+      referralCode: z.string().trim().max(32).optional(),
+    }),
   )
   .handler(async ({ data }) => {
     const db = getDb()
@@ -61,12 +65,20 @@ export const register = createServerFn({ method: 'POST' })
           ownerUserId: created.id,
         },
       ])
+      const ownCode = await ensureReferralCode(tx, created.id)
+      const sponsor = data.referralCode
+        ? await attachReferrer(tx, created.id, data.referralCode)
+        : null
       await tx.insert(auditLogs).values({
         actorUserId: created.id,
         action: 'USER_REGISTERED',
         entityType: 'user',
         entityId: created.id,
-        after: { email: data.email },
+        after: {
+          email: data.email,
+          referralCode: ownCode.code,
+          referredBy: sponsor?.userId ?? null,
+        },
       })
       return created
     })
@@ -133,15 +145,13 @@ export const changePassword = createServerFn({ method: 'POST' })
         .update(users)
         .set({ passwordHash, updatedAt: new Date() })
         .where(sql`${users.id} = ${user.id}`)
-      await tx
-        .insert(auditLogs)
-        .values({
-          actorUserId: user.id,
-          action: 'PASSWORD_CHANGED',
-          entityType: 'user',
-          entityId: user.id,
-          after: { sessionsRevoked: true },
-        })
+      await tx.insert(auditLogs).values({
+        actorUserId: user.id,
+        action: 'PASSWORD_CHANGED',
+        entityType: 'user',
+        entityId: user.id,
+        after: { sessionsRevoked: true },
+      })
       await tx.delete(sessions).where(sql`${sessions.userId} = ${user.id}`)
     })
     await destroyUserSession()

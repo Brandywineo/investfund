@@ -208,6 +208,13 @@ export const walletAddresses = pgTable(
     status: walletAddressStatus('status').default('ACTIVE').notNull(),
     lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
     lastSweptAt: timestamp('last_swept_at', { withTimezone: true }),
+    tokenBalance: numeric('token_balance', { precision: 20, scale: 8 })
+      .default('0')
+      .notNull(),
+    nativeBalance: numeric('native_balance', { precision: 30, scale: 18 })
+      .default('0')
+      .notNull(),
+    balanceCheckedAt: timestamp('balance_checked_at', { withTimezone: true }),
     ...timestamps,
   },
   (table) => [
@@ -376,6 +383,90 @@ export const dailyAccruals = pgTable(
   ],
 )
 
+export const referralCodes = pgTable(
+  'referral_codes',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .references(() => users.id, { onDelete: 'restrict' })
+      .notNull(),
+    code: text('code').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex('referral_codes_user_unique').on(table.userId),
+    uniqueIndex('referral_codes_code_unique').on(sql`upper(${table.code})`),
+  ],
+)
+
+export const referralRelationships = pgTable(
+  'referral_relationships',
+  {
+    referredUserId: uuid('referred_user_id')
+      .primaryKey()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    referrerUserId: uuid('referrer_user_id')
+      .references(() => users.id, { onDelete: 'restrict' })
+      .notNull(),
+    referralCodeId: uuid('referral_code_id')
+      .references(() => referralCodes.id, { onDelete: 'restrict' })
+      .notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index('referral_relationships_referrer_idx').on(table.referrerUserId),
+    check(
+      'referral_relationship_not_self',
+      sql`${table.referredUserId} <> ${table.referrerUserId}`,
+    ),
+  ],
+)
+
+export const referralCommissions = pgTable(
+  'referral_commissions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    dailyAccrualId: uuid('daily_accrual_id')
+      .references(() => dailyAccruals.id, { onDelete: 'restrict' })
+      .notNull(),
+    sourceUserId: uuid('source_user_id')
+      .references(() => users.id, { onDelete: 'restrict' })
+      .notNull(),
+    beneficiaryUserId: uuid('beneficiary_user_id')
+      .references(() => users.id, { onDelete: 'restrict' })
+      .notNull(),
+    level: integer('level').notNull(),
+    ratePercent: numeric('rate_percent', { precision: 9, scale: 6 }).notNull(),
+    sourceProfit: numeric('source_profit', {
+      precision: 20,
+      scale: 8,
+    }).notNull(),
+    amount: numeric('amount', { precision: 20, scale: 8 }).notNull(),
+    ledgerTransactionId: uuid('ledger_transaction_id')
+      .references(() => ledgerTransactions.id, { onDelete: 'restrict' })
+      .notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex('referral_commissions_accrual_level_unique').on(
+      table.dailyAccrualId,
+      table.level,
+    ),
+    index('referral_commissions_beneficiary_idx').on(table.beneficiaryUserId),
+    check(
+      'referral_commission_level_range',
+      sql`${table.level} between 1 and 3`,
+    ),
+    check('referral_commission_amount_positive', sql`${table.amount} > 0`),
+  ],
+)
+
 export const deposits = pgTable(
   'deposits',
   {
@@ -469,6 +560,7 @@ export const treasuryTransfers = pgTable(
     destination: text('destination').notNull(),
     direction: text('direction').default('OUTBOUND').notNull(),
     reason: text('reason').default('Legacy treasury transfer').notNull(),
+    purpose: text('purpose').default('MT5_CAPITAL').notNull(),
     status: treasuryTransferStatus('status').default('DRAFTED').notNull(),
     txHash: text('tx_hash'),
     signedTransaction: text('signed_transaction'),

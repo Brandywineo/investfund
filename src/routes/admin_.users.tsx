@@ -84,7 +84,7 @@ function UsersPage() {
                     <span className="text-xs text-[#6e857a]">{user.email}</span>
                   </td>
                   <td className="text-sm text-[#6e857a]">
-                    {new Date(user.createdAt).toLocaleDateString()}
+                    {new Date(user.createdAt).toISOString().slice(0, 10)}
                   </td>
                   <td className="max-w-72 pr-4 text-xs">
                     {user.depositAddress ? (

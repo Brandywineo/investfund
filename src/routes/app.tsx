@@ -36,7 +36,7 @@ function Home() {
         [
           'Investment activated',
           `${portfolio.activePrincipal} USDT`,
-          new Date(portfolio.latestActivatedAt).toLocaleDateString(),
+          new Date(portfolio.latestActivatedAt).toISOString().slice(0, 10),
         ],
       ]
     : [['No transactions yet', '—', 'Fund your wallet to begin']]
@@ -57,6 +57,7 @@ function Home() {
             <span className="font-semibold text-[#123d2d]">Overview</span>
             <Link to="/invest">Invest</Link>
             <Link to="/wallet">Wallet</Link>
+            <Link to="/referrals">Referrals</Link>
             <Link to="/trading">Trading</Link>
             <Link to="/community">Community</Link>
             <Link to="/ledger">Ledger</Link>
@@ -89,6 +90,12 @@ function Home() {
               className="w-fit rounded-full bg-white px-6 py-3 text-sm font-bold text-[#123d2d] ring-1 ring-black/8"
             >
               Wallet
+            </Link>
+            <Link
+              to="/referrals"
+              className="w-fit rounded-full bg-white px-6 py-3 text-sm font-bold text-[#123d2d] ring-1 ring-black/8"
+            >
+              Referrals
             </Link>
             <Link
               to="/invest"

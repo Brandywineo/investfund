@@ -1,5 +1,5 @@
 import { createServerFn } from '@tanstack/react-start'
-import { desc, eq, like, sql } from 'drizzle-orm'
+import { asc, desc, eq, like, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { isAddress } from 'ethers'
 import { getDb } from '#/db'
@@ -267,6 +267,10 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
           id: walletAddresses.id,
           address: walletAddresses.address,
           derivationIndex: walletAddresses.derivationIndex,
+          tokenBalance: walletAddresses.tokenBalance,
+          nativeBalance: walletAddresses.nativeBalance,
+          balanceCheckedAt: walletAddresses.balanceCheckedAt,
+          createdAt: walletAddresses.createdAt,
           userEmail: users.email,
           status: walletAddresses.status,
           lastSeenAt: walletAddresses.lastSeenAt,
@@ -274,7 +278,7 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
         })
         .from(walletAddresses)
         .innerJoin(users, eq(users.id, walletAddresses.userId))
-        .orderBy(desc(walletAddresses.createdAt))
+        .orderBy(asc(walletAddresses.createdAt))
         .limit(100),
       db
         .select()
@@ -455,6 +459,13 @@ export const createTreasuryTransfer = createServerFn({ method: 'POST' })
       amount: amountSchema,
       destination: addressSchema,
       reason: z.string().trim().min(3).max(250),
+      purpose: z.enum([
+        'MT5_CAPITAL',
+        'ADMIN_RESERVE',
+        'WITHDRAWAL_LIQUIDITY',
+        'OPERATIONS',
+        'OTHER',
+      ]),
     }),
   )
   .handler(async ({ data }) => {
@@ -463,6 +474,7 @@ export const createTreasuryTransfer = createServerFn({ method: 'POST' })
       amount: data.amount,
       destination: data.destination,
       reason: data.reason,
+      purpose: data.purpose,
       createdBy: admin.id,
     })
     return { success: true }

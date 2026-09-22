@@ -64,6 +64,13 @@
       "when": 1790051311888,
       "tag": "0008_smart_magneto",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790057226246,
+      "tag": "0009_regular_the_liberteens",
+      "breakpoints": true
     }
   ]
 }

@@ -17,10 +17,12 @@ import { Route as CommunityRouteImport } from './routes/community'
 import { Route as InvestRouteImport } from './routes/invest'
 import { Route as LedgerRouteImport } from './routes/ledger'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as ReferralsRouteImport } from './routes/referrals'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as TradingRouteImport } from './routes/trading'
 import { Route as WalletRouteImport } from './routes/wallet'
 import { Route as AdminCustodyRouteImport } from './routes/admin_.custody'
+import { Route as AdminReferralsRouteImport } from './routes/admin_.referrals'
 import { Route as AdminUsersRouteImport } from './routes/admin_.users'
 
 const IndexRoute = IndexRouteImport.update({
@@ -63,6 +65,11 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ReferralsRoute = ReferralsRouteImport.update({
+  id: '/referrals',
+  path: '/referrals',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
   path: '/signup',
@@ -83,6 +90,11 @@ const AdminCustodyRoute = AdminCustodyRouteImport.update({
   path: '/admin/custody',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminReferralsRoute = AdminReferralsRouteImport.update({
+  id: '/admin_/referrals',
+  path: '/admin/referrals',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminUsersRoute = AdminUsersRouteImport.update({
   id: '/admin_/users',
   path: '/admin/users',
@@ -98,10 +110,12 @@ export interface FileRoutesByFullPath {
   '/invest': typeof InvestRoute
   '/ledger': typeof LedgerRoute
   '/login': typeof LoginRoute
+  '/referrals': typeof ReferralsRoute
   '/signup': typeof SignupRoute
   '/trading': typeof TradingRoute
   '/wallet': typeof WalletRoute
   '/admin/custody': typeof AdminCustodyRoute
+  '/admin/referrals': typeof AdminReferralsRoute
   '/admin/users': typeof AdminUsersRoute
 }
 export interface FileRoutesByTo {
@@ -113,10 +127,12 @@ export interface FileRoutesByTo {
   '/invest': typeof InvestRoute
   '/ledger': typeof LedgerRoute
   '/login': typeof LoginRoute
+  '/referrals': typeof ReferralsRoute
   '/signup': typeof SignupRoute
   '/trading': typeof TradingRoute
   '/wallet': typeof WalletRoute
   '/admin/custody': typeof AdminCustodyRoute
+  '/admin/referrals': typeof AdminReferralsRoute
   '/admin/users': typeof AdminUsersRoute
 }
 export interface FileRoutesById {
@@ -129,10 +145,12 @@ export interface FileRoutesById {
   '/invest': typeof InvestRoute
   '/ledger': typeof LedgerRoute
   '/login': typeof LoginRoute
+  '/referrals': typeof ReferralsRoute
   '/signup': typeof SignupRoute
   '/trading': typeof TradingRoute
   '/wallet': typeof WalletRoute
   '/admin_/custody': typeof AdminCustodyRoute
+  '/admin_/referrals': typeof AdminReferralsRoute
   '/admin_/users': typeof AdminUsersRoute
 }
 export interface FileRouteTypes {
@@ -146,10 +164,12 @@ export interface FileRouteTypes {
     | '/invest'
     | '/ledger'
     | '/login'
+    | '/referrals'
     | '/signup'
     | '/trading'
     | '/wallet'
     | '/admin/custody'
+    | '/admin/referrals'
     | '/admin/users'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -161,10 +181,12 @@ export interface FileRouteTypes {
     | '/invest'
     | '/ledger'
     | '/login'
+    | '/referrals'
     | '/signup'
     | '/trading'
     | '/wallet'
     | '/admin/custody'
+    | '/admin/referrals'
     | '/admin/users'
   id:
     | '__root__'
@@ -176,10 +198,12 @@ export interface FileRouteTypes {
     | '/invest'
     | '/ledger'
     | '/login'
+    | '/referrals'
     | '/signup'
     | '/trading'
     | '/wallet'
     | '/admin_/custody'
+    | '/admin_/referrals'
     | '/admin_/users'
   fileRoutesById: FileRoutesById
 }
@@ -192,10 +216,12 @@ export interface RootRouteChildren {
   InvestRoute: typeof InvestRoute
   LedgerRoute: typeof LedgerRoute
   LoginRoute: typeof LoginRoute
+  ReferralsRoute: typeof ReferralsRoute
   SignupRoute: typeof SignupRoute
   TradingRoute: typeof TradingRoute
   WalletRoute: typeof WalletRoute
   AdminCustodyRoute: typeof AdminCustodyRoute
+  AdminReferralsRoute: typeof AdminReferralsRoute
   AdminUsersRoute: typeof AdminUsersRoute
 }
 
@@ -257,6 +283,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/referrals': {
+      id: '/referrals'
+      path: '/referrals'
+      fullPath: '/referrals'
+      preLoaderRoute: typeof ReferralsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/signup': {
       id: '/signup'
       path: '/signup'
@@ -285,6 +318,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminCustodyRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin_/referrals': {
+      id: '/admin_/referrals'
+      path: '/admin/referrals'
+      fullPath: '/admin/referrals'
+      preLoaderRoute: typeof AdminReferralsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin_/users': {
       id: '/admin_/users'
       path: '/admin/users'
@@ -304,10 +344,12 @@ const rootRouteChildren: RootRouteChildren = {
   InvestRoute: InvestRoute,
   LedgerRoute: LedgerRoute,
   LoginRoute: LoginRoute,
+  ReferralsRoute: ReferralsRoute,
   SignupRoute: SignupRoute,
   TradingRoute: TradingRoute,
   WalletRoute: WalletRoute,
   AdminCustodyRoute: AdminCustodyRoute,
+  AdminReferralsRoute: AdminReferralsRoute,
   AdminUsersRoute: AdminUsersRoute,
 }
 export const routeTree = rootRouteImport

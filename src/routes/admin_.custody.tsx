@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import {
   createFileRoute,
@@ -34,6 +34,8 @@ function CustodyAdminPage() {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
+  const [busyAddressId, setBusyAddressId] = useState('')
+  const [addressSort, setAddressSort] = useState('registered')
   const [refs, setRefs] = useState<Record<string, string>>({})
   async function run(action: () => Promise<unknown>, success: string) {
     setBusy(true)
@@ -81,11 +83,61 @@ function CustodyAdminPage() {
             amount: String(f.get('amount')),
             destination: String(f.get('destination')),
             reason: String(f.get('reason')),
+            purpose: String(f.get('purpose')) as
+              | 'MT5_CAPITAL'
+              | 'ADMIN_RESERVE'
+              | 'WITHDRAWAL_LIQUIDITY'
+              | 'OPERATIONS'
+              | 'OTHER',
           },
         }),
       'Treasury transfer drafted.',
     )
   }
+  async function runSweep(walletAddressId: string) {
+    setBusyAddressId(walletAddressId)
+    setError('')
+    setMessage('')
+    try {
+      await sweepWalletAddress({ data: { walletAddressId } })
+      setMessage('Wallet sweep broadcast.')
+      await router.invalidate()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Wallet sweep failed')
+    } finally {
+      setBusyAddressId('')
+    }
+  }
+  const sortedAddresses = useMemo(() => {
+    const addresses = [...data.addresses]
+    if (addressSort === 'highest')
+      return addresses.sort(
+        (left, right) => Number(right.tokenBalance) - Number(left.tokenBalance),
+      )
+    if (addressSort === 'lowest')
+      return addresses.sort(
+        (left, right) => Number(left.tokenBalance) - Number(right.tokenBalance),
+      )
+    if (addressSort === 'recent-deposit')
+      return addresses.sort(
+        (left, right) =>
+          new Date(right.lastSeenAt || 0).getTime() -
+          new Date(left.lastSeenAt || 0).getTime(),
+      )
+    if (addressSort === 'ready')
+      return addresses.sort((left, right) => {
+        const threshold = Number(data.settings.minimumSweepAmount)
+        return (
+          Number(Number(right.tokenBalance) >= threshold) -
+          Number(Number(left.tokenBalance) >= threshold)
+        )
+      })
+    return addresses.sort(
+      (left, right) =>
+        new Date(left.createdAt).getTime() -
+        new Date(right.createdAt).getTime(),
+    )
+  }, [addressSort, data.addresses, data.settings.minimumSweepAmount])
   function treasuryReturn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const f = new FormData(event.currentTarget)
@@ -128,6 +180,7 @@ function CustodyAdminPage() {
           <nav className="flex gap-5 text-sm font-bold">
             <Link to="/admin">Controls</Link>
             <Link to="/admin/users">Users</Link>
+            <Link to="/admin/referrals">Referrals</Link>
             <Link to="/app">Dashboard →</Link>
           </nav>
         </header>
@@ -260,7 +313,19 @@ function CustodyAdminPage() {
             onSubmit={transfer}
             className="rounded-[2rem] bg-[#123d2d] p-6 text-white"
           >
-            <h2 className="text-xl font-semibold">Send to MT5 treasury</h2>
+            <h2 className="text-xl font-semibold">Admin hot-wallet transfer</h2>
+            <label className="mt-5 block text-sm font-semibold">
+              Purpose
+              <select name="purpose" className={`${input} text-[#10251c]`}>
+                <option value="MT5_CAPITAL">MT5 capital</option>
+                <option value="ADMIN_RESERVE">Admin reserve wallet</option>
+                <option value="WITHDRAWAL_LIQUIDITY">
+                  Withdrawal liquidity wallet
+                </option>
+                <option value="OPERATIONS">Operations</option>
+                <option value="OTHER">Other</option>
+              </select>
+            </label>
             <label className="mt-5 block text-sm font-semibold">
               Amount
               <input
@@ -502,50 +567,62 @@ function CustodyAdminPage() {
             </Row>
           ))}
         </Queue>
-        <Queue title="HD deposit addresses">
-          {data.addresses.map((item) => (
-            <Row
-              key={item.id}
-              title={item.userEmail}
-              status={item.status}
-              detail={`${item.address} · derivation index ${item.derivationIndex}`}
-            >
-              <button
-                disabled={busy}
-                onClick={() =>
-                  void run(
-                    () =>
-                      sweepWalletAddress({
-                        data: { walletAddressId: item.id },
-                      }),
-                    'Wallet sweep broadcast.',
-                  )
-                }
-                className="action"
+        <div className="mt-5 flex items-center justify-between rounded-t-[2rem] bg-white px-6 pt-6">
+          <h2 className="text-xl font-semibold">HD deposit addresses</h2>
+          <select
+            value={addressSort}
+            onChange={(event) => setAddressSort(event.target.value)}
+            className="rounded-xl border border-black/10 px-3 py-2 text-sm"
+          >
+            <option value="registered">Registration order</option>
+            <option value="highest">Highest balance</option>
+            <option value="lowest">Lowest balance</option>
+            <option value="ready">Ready to sweep</option>
+            <option value="recent-deposit">Recent deposit</option>
+          </select>
+        </div>
+        <section className="overflow-hidden rounded-b-[2rem] bg-white ring-1 ring-black/5">
+          <div className="divide-y divide-black/6">
+            {sortedAddresses.map((item) => (
+              <Row
+                key={item.id}
+                title={item.userEmail}
+                status={item.status}
+                detail={`${item.address} · index ${item.derivationIndex} · ${Number(item.tokenBalance).toFixed(8)} USDT · ${Number(item.nativeBalance).toFixed(6)} BNB`}
               >
-                Sweep now
-              </button>
-            </Row>
-          ))}
-        </Queue>
+                <button
+                  disabled={
+                    busyAddressId === item.id || Number(item.tokenBalance) <= 0
+                  }
+                  onClick={() => void runSweep(item.id)}
+                  className="action"
+                >
+                  {busyAddressId === item.id
+                    ? 'Sweeping…'
+                    : 'Sweep this wallet'}
+                </button>
+              </Row>
+            ))}
+          </div>
+        </section>
         <section className="mt-5 rounded-[2rem] bg-white p-6 ring-1 ring-black/5">
           <h2 className="text-xl font-semibold">Blockchain watcher</h2>
           <p className="mt-3 text-sm text-[#6e857a]">
             {data.watcher
-              ? `Last block ${data.watcher.lastScannedBlock}; head ${data.watcher.lastHeadBlock ?? 'unknown'}; last run ${data.watcher.lastRunAt ? new Date(data.watcher.lastRunAt).toLocaleString() : 'never'}.`
+              ? `Last block ${data.watcher.lastScannedBlock}; head ${data.watcher.lastHeadBlock ?? 'unknown'}; last run ${data.watcher.lastRunAt ? new Date(data.watcher.lastRunAt).toISOString() : 'never'}.`
               : 'The watcher has not completed its first run.'}
           </p>
           <p className="mt-2 text-sm text-red-700">
             {data.watcher?.lastError || ''}
           </p>
         </section>
-        <Queue title="MT5 treasury transfers">
+        <Queue title="Admin hot-wallet transfers">
           {data.transfers.map((item) => (
             <Row
               key={item.id}
               title={`${Number(item.amount).toFixed(2)} USDT · ${item.destination}`}
               status={item.status}
-              detail={`${item.direction} · ${item.reason} · ${item.txHash || item.brokerReference || 'No movement recorded'}`}
+              detail={`${item.direction} · ${item.purpose} · ${item.reason} · ${item.txHash || item.brokerReference || 'No movement recorded'}`}
             >
               <div className="grid min-w-52 gap-2">
                 {item.status === 'DRAFTED' && (
