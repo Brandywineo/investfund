@@ -49,6 +49,60 @@ function chunks<T>(values: Array<T>, size: number) {
   return output
 }
 
+type RpcBlock = {
+  number?: string
+  transactions?: Array<{
+    hash: string
+    from: string
+    to: string | null
+    value: string
+  }>
+}
+
+async function nativeTransfers(
+  rpcUrl: string,
+  fromBlock: number,
+  toBlock: number,
+) {
+  const blocks: Array<RpcBlock> = []
+  const blockNumbers = Array.from(
+    { length: toBlock - fromBlock + 1 },
+    (_, index) => fromBlock + index,
+  )
+  for (const batch of chunks(blockNumbers, 10)) {
+    const response = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(
+        batch.map((blockNumber, index) => ({
+          jsonrpc: '2.0',
+          id: index + 1,
+          method: 'eth_getBlockByNumber',
+          params: [`0x${blockNumber.toString(16)}`, true],
+        })),
+      ),
+      signal: AbortSignal.timeout(20_000),
+    })
+    if (!response.ok)
+      throw new Error(
+        `Native transaction scan returned HTTP ${response.status}`,
+      )
+    const payload = (await response.json()) as Array<{
+      result?: RpcBlock
+      error?: { message?: string }
+    }>
+    if (!Array.isArray(payload))
+      throw new Error('RPC provider does not support batched native scans')
+    const failure = payload.find((item) => item.error)
+    if (failure?.error)
+      throw new Error(failure.error.message || 'Native transaction scan failed')
+    blocks.push(
+      ...payload.flatMap((item) => (item.result ? [item.result] : [])),
+    )
+  }
+  return blocks
+}
+
 async function finalizedBlock(provider: JsonRpcProvider, head: number) {
   try {
     const block = (await provider.send('eth_getBlockByNumber', [
@@ -285,6 +339,73 @@ export async function runChainWorker() {
           if (inserted) platformTransactions += 1
         }
       }
+    }
+
+    try {
+      const nativeBlocks = await nativeTransfers(rpcUrl, fromBlock, toBlock)
+      for (const block of nativeBlocks) {
+        const blockNumber = block.number ? Number(BigInt(block.number)) : null
+        for (const transaction of block.transactions ?? []) {
+          if (!transaction.to || BigInt(transaction.value) <= 0n) continue
+          const fromWallet = managedWalletRows.find(
+            (wallet) =>
+              wallet.address.toLowerCase() === transaction.from.toLowerCase(),
+          )
+          const toWallet = managedWalletRows.find(
+            (wallet) =>
+              wallet.address.toLowerCase() === transaction.to!.toLowerCase(),
+          )
+          for (const match of [
+            fromWallet
+              ? { wallet: fromWallet, direction: 'OUTGOING' as const }
+              : null,
+            toWallet
+              ? { wallet: toWallet, direction: 'INCOMING' as const }
+              : null,
+          ].filter((item): item is NonNullable<typeof item> => Boolean(item))) {
+            const knownGasSweep = knownSweeps.find(
+              (sweep) =>
+                sweep.gasTxHash?.toLowerCase() ===
+                transaction.hash.toLowerCase(),
+            )
+            const classification = knownGasSweep
+              ? 'SWEEP_GAS'
+              : match.direction === 'INCOMING' &&
+                  match.wallet.role === 'SWEEP_GAS'
+                ? 'GAS_TOP_UP'
+                : null
+            const inserted = await db
+              .insert(platformWalletTransactions)
+              .values({
+                platformWalletId: match.wallet.id,
+                eventKey: `${settings.chainId}:${match.wallet.role}:${transaction.hash.toLowerCase()}:native`,
+                chainId: settings.chainId,
+                txHash: transaction.hash,
+                blockNumber,
+                direction: match.direction,
+                asset: 'BNB',
+                amount: formatUnits(BigInt(transaction.value), 18),
+                fromAddress: transaction.from,
+                toAddress: transaction.to,
+                status:
+                  blockNumber !== null && blockNumber <= finalized
+                    ? 'CONFIRMED'
+                    : 'PENDING',
+                confirmations:
+                  blockNumber === null ? 0 : head - blockNumber + 1,
+                classification,
+                relatedType: knownGasSweep ? 'wallet_sweep' : null,
+                relatedId: knownGasSweep?.id ?? null,
+              })
+              .onConflictDoNothing()
+              .returning({ id: platformWalletTransactions.id })
+              .then((rows) => rows.at(0))
+            if (inserted) platformTransactions += 1
+          }
+        }
+      }
+    } catch (cause) {
+      console.error('Native BNB transaction scan skipped', cause)
     }
   }
 
