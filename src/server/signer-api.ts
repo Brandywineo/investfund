@@ -2,6 +2,10 @@ import { z } from 'zod'
 
 const addressResponse = z.object({ address: z.string(), index: z.number() })
 const transactionResponse = z.object({ txHash: z.string(), amount: z.string() })
+const platformWalletsResponse = z.object({
+  hot: z.object({ address: z.string(), derivationPath: z.string() }),
+  gas: z.object({ address: z.string(), derivationPath: z.string() }),
+})
 
 async function signerRequest(path: string, body: Record<string, unknown>) {
   const baseUrl = process.env.SIGNER_URL
@@ -28,6 +32,10 @@ async function signerRequest(path: string, body: Record<string, unknown>) {
 
 export async function deriveDepositAddress(index: number) {
   return addressResponse.parse(await signerRequest('/derive', { index }))
+}
+
+export async function getSignerPlatformWallets() {
+  return platformWalletsResponse.parse(await signerRequest('/wallets', {}))
 }
 
 export async function requestWalletSweep(

@@ -367,7 +367,18 @@ const server = createServer(async (request, response) => {
         >)
       : {}
     let result: Record<string, unknown>
-    if (request.method === 'POST' && request.url === '/derive') {
+    if (request.method === 'POST' && request.url === '/wallets') {
+      result = {
+        hot: {
+          address: hotWallet.address,
+          derivationPath: "m/44'/60'/0'/1/0",
+        },
+        gas: {
+          address: gasWallet.address,
+          derivationPath: "m/44'/60'/0'/1/1",
+        },
+      }
+    } else if (request.method === 'POST' && request.url === '/derive') {
       const index = Number(body.index)
       if (!Number.isSafeInteger(index) || index < 1)
         throw new Error('Invalid derivation index')

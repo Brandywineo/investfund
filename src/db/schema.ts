@@ -76,6 +76,15 @@ export const sweepStatus = pgEnum('sweep_status', [
   'SWEPT',
   'FAILED',
 ])
+export const platformWalletRole = pgEnum('platform_wallet_role', [
+  'HOT_WITHDRAWAL',
+  'SWEEP_GAS',
+])
+export const platformTransactionStatus = pgEnum('platform_transaction_status', [
+  'PENDING',
+  'CONFIRMED',
+  'FAILED',
+])
 
 const timestamps = {
   createdAt: timestamp('created_at', { withTimezone: true })
@@ -551,6 +560,80 @@ export const chainWatcherState = pgTable('chain_watcher_state', {
   lastError: text('last_error'),
   ...timestamps,
 })
+
+export const platformWallets = pgTable(
+  'platform_wallets',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    role: platformWalletRole('role').notNull(),
+    address: text('address').notNull(),
+    derivationPath: text('derivation_path').notNull(),
+    tokenBalance: numeric('token_balance', { precision: 20, scale: 8 })
+      .default('0')
+      .notNull(),
+    nativeBalance: numeric('native_balance', { precision: 30, scale: 18 })
+      .default('0')
+      .notNull(),
+    balanceCheckedAt: timestamp('balance_checked_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('platform_wallets_role_unique').on(table.role),
+    uniqueIndex('platform_wallets_address_unique').on(
+      sql`lower(${table.address})`,
+    ),
+  ],
+)
+
+export const platformWalletTransactions = pgTable(
+  'platform_wallet_transactions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    platformWalletId: uuid('platform_wallet_id')
+      .references(() => platformWallets.id, { onDelete: 'restrict' })
+      .notNull(),
+    eventKey: text('event_key').notNull(),
+    chainId: integer('chain_id').notNull(),
+    txHash: text('tx_hash').notNull(),
+    logIndex: integer('log_index'),
+    blockNumber: bigint('block_number', { mode: 'number' }),
+    direction: text('direction').notNull(),
+    asset: text('asset').notNull(),
+    amount: numeric('amount', { precision: 30, scale: 18 }).notNull(),
+    fromAddress: text('from_address').notNull(),
+    toAddress: text('to_address').notNull(),
+    status: platformTransactionStatus('status').default('PENDING').notNull(),
+    confirmations: integer('confirmations').default(0).notNull(),
+    classification: text('classification'),
+    relatedType: text('related_type'),
+    relatedId: uuid('related_id'),
+    adminNote: text('admin_note'),
+    classifiedBy: uuid('classified_by').references(() => users.id),
+    classifiedAt: timestamp('classified_at', { withTimezone: true }),
+    observedAt: timestamp('observed_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('platform_wallet_transactions_event_unique').on(table.eventKey),
+    index('platform_wallet_transactions_wallet_idx').on(
+      table.platformWalletId,
+      table.observedAt,
+    ),
+    index('platform_wallet_transactions_classification_idx').on(
+      table.classification,
+    ),
+    check(
+      'platform_wallet_transaction_direction',
+      sql`${table.direction} in ('INCOMING', 'OUTGOING')`,
+    ),
+    check(
+      'platform_wallet_transaction_amount_positive',
+      sql`${table.amount} > 0`,
+    ),
+  ],
+)
 
 export const treasuryTransfers = pgTable(
   'treasury_transfers',

@@ -14,6 +14,8 @@ import {
   chainWatcherState,
   custodySettings,
   deposits,
+  platformWallets,
+  platformWalletTransactions,
   walletAddresses,
   walletSweeps,
   treasuryTransfers,
@@ -26,6 +28,7 @@ import {
   settleBroadcastWithdrawal,
 } from './custody.service'
 import {
+  getSignerPlatformWallets,
   requestTreasuryBroadcast,
   requestWalletSweep,
   requestWithdrawalBroadcast,
@@ -116,6 +119,233 @@ export async function runChainWorker() {
   const token = new Contract(settings.tokenContractAddress, TOKEN_ABI, provider)
   const decimals = Number(await token.decimals())
   let credited = 0
+
+  const signerWallets = await getSignerPlatformWallets()
+  const signerWalletDefinitions = [
+    {
+      role: 'HOT_WITHDRAWAL' as const,
+      address: getAddress(signerWallets.hot.address),
+      derivationPath: signerWallets.hot.derivationPath,
+    },
+    {
+      role: 'SWEEP_GAS' as const,
+      address: getAddress(signerWallets.gas.address),
+      derivationPath: signerWallets.gas.derivationPath,
+    },
+  ]
+  for (const definition of signerWalletDefinitions) {
+    await db
+      .insert(platformWallets)
+      .values(definition)
+      .onConflictDoUpdate({
+        target: platformWallets.role,
+        set: {
+          address: definition.address,
+          derivationPath: definition.derivationPath,
+          updatedAt: new Date(),
+        },
+      })
+  }
+  const managedWalletRows = await db.select().from(platformWallets)
+  await Promise.all(
+    managedWalletRows.map(async (wallet) => {
+      const [tokenBalance, nativeBalance] = await Promise.all([
+        token.balanceOf(wallet.address) as Promise<bigint>,
+        provider.getBalance(wallet.address),
+      ])
+      await db
+        .update(platformWallets)
+        .set({
+          tokenBalance: formatUnits(tokenBalance, decimals),
+          nativeBalance: formatUnits(nativeBalance, 18),
+          balanceCheckedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(platformWallets.id, wallet.id))
+    }),
+  )
+
+  const [knownSweeps, knownWithdrawals, knownTreasury, recordedGasSweeps] =
+    await Promise.all([
+      db
+        .select({
+          id: walletSweeps.id,
+          sweepTxHash: walletSweeps.sweepTxHash,
+          gasTxHash: walletSweeps.gasTxHash,
+        })
+        .from(walletSweeps),
+      db
+        .select({ id: withdrawals.id, txHash: withdrawals.txHash })
+        .from(withdrawals),
+      db
+        .select({
+          id: treasuryTransfers.id,
+          txHash: treasuryTransfers.txHash,
+          purpose: treasuryTransfers.purpose,
+          direction: treasuryTransfers.direction,
+        })
+        .from(treasuryTransfers),
+      db
+        .select({ relatedId: platformWalletTransactions.relatedId })
+        .from(platformWalletTransactions)
+        .where(
+          and(
+            eq(platformWalletTransactions.asset, 'BNB'),
+            eq(platformWalletTransactions.classification, 'SWEEP_GAS'),
+          ),
+        ),
+    ])
+  const sweepByHash = new Map(
+    knownSweeps
+      .filter((row) => row.sweepTxHash)
+      .map((row) => [row.sweepTxHash!.toLowerCase(), row]),
+  )
+  const withdrawalByHash = new Map(
+    knownWithdrawals
+      .filter((row) => row.txHash)
+      .map((row) => [row.txHash!.toLowerCase(), row]),
+  )
+  const treasuryByHash = new Map(
+    knownTreasury
+      .filter((row) => row.txHash)
+      .map((row) => [row.txHash!.toLowerCase(), row]),
+  )
+  let platformTransactions = 0
+
+  if (fromBlock <= toBlock) {
+    for (const wallet of managedWalletRows) {
+      for (const direction of ['INCOMING', 'OUTGOING'] as const) {
+        const walletTopic = zeroPadValue(getAddress(wallet.address), 32)
+        const logs = await provider.getLogs({
+          address: settings.tokenContractAddress,
+          fromBlock,
+          toBlock,
+          topics:
+            direction === 'INCOMING'
+              ? [TRANSFER_TOPIC, null, walletTopic]
+              : [TRANSFER_TOPIC, walletTopic],
+        })
+        for (const log of logs) {
+          const parsed = tokenInterface.parseLog(log)
+          if (!parsed) continue
+          const txHash = log.transactionHash.toLowerCase()
+          const knownSweep = sweepByHash.get(txHash)
+          const knownWithdrawal = withdrawalByHash.get(txHash)
+          const knownTransfer = treasuryByHash.get(txHash)
+          const relation = knownSweep
+            ? {
+                classification: 'USER_SWEEP',
+                relatedType: 'wallet_sweep',
+                relatedId: knownSweep.id,
+              }
+            : knownWithdrawal
+              ? {
+                  classification: 'USER_WITHDRAWAL',
+                  relatedType: 'withdrawal',
+                  relatedId: knownWithdrawal.id,
+                }
+              : knownTransfer
+                ? {
+                    classification:
+                      knownTransfer.direction === 'RETURN'
+                        ? 'MT5_RETURN'
+                        : knownTransfer.purpose,
+                    relatedType: 'treasury_transfer',
+                    relatedId: knownTransfer.id,
+                  }
+                : {
+                    classification:
+                      direction === 'INCOMING' && wallet.role === 'SWEEP_GAS'
+                        ? 'GAS_TOP_UP'
+                        : null,
+                    relatedType: null,
+                    relatedId: null,
+                  }
+          const inserted = await db
+            .insert(platformWalletTransactions)
+            .values({
+              platformWalletId: wallet.id,
+              eventKey: `${settings.chainId}:${wallet.role}:${txHash}:${log.index}`,
+              chainId: settings.chainId,
+              txHash: log.transactionHash,
+              logIndex: log.index,
+              blockNumber: log.blockNumber,
+              direction,
+              asset: 'USDT',
+              amount: formatUnits(parsed.args.value as bigint, decimals),
+              fromAddress: String(parsed.args.from),
+              toAddress: String(parsed.args.to),
+              status: log.blockNumber <= finalized ? 'CONFIRMED' : 'PENDING',
+              confirmations: head - log.blockNumber + 1,
+              ...relation,
+            })
+            .onConflictDoNothing()
+            .returning({ id: platformWalletTransactions.id })
+            .then((rows) => rows.at(0))
+          if (inserted) platformTransactions += 1
+        }
+      }
+    }
+  }
+
+  const gasWalletRow = managedWalletRows.find(
+    (wallet) => wallet.role === 'SWEEP_GAS',
+  )
+  const recordedGasSweepIds = new Set(
+    recordedGasSweeps.flatMap((row) => (row.relatedId ? [row.relatedId] : [])),
+  )
+  if (gasWalletRow) {
+    for (const sweep of knownSweeps.filter(
+      (row) => row.gasTxHash && !recordedGasSweepIds.has(row.id),
+    )) {
+      const transaction = await provider
+        .getTransaction(sweep.gasTxHash!)
+        .catch(() => null)
+      if (!transaction || transaction.value <= 0n || !transaction.to) continue
+      const receipt = await provider
+        .getTransactionReceipt(sweep.gasTxHash!)
+        .catch(() => null)
+      await db
+        .insert(platformWalletTransactions)
+        .values({
+          platformWalletId: gasWalletRow.id,
+          eventKey: `${settings.chainId}:SWEEP_GAS:${sweep.gasTxHash!.toLowerCase()}:native`,
+          chainId: settings.chainId,
+          txHash: sweep.gasTxHash!,
+          blockNumber: receipt?.blockNumber,
+          direction: 'OUTGOING',
+          asset: 'BNB',
+          amount: formatUnits(transaction.value, 18),
+          fromAddress: transaction.from,
+          toAddress: transaction.to,
+          status: receipt
+            ? receipt.status === 1
+              ? 'CONFIRMED'
+              : 'FAILED'
+            : 'PENDING',
+          confirmations: receipt ? head - receipt.blockNumber + 1 : 0,
+          classification: 'SWEEP_GAS',
+          relatedType: 'wallet_sweep',
+          relatedId: sweep.id,
+        })
+        .onConflictDoNothing()
+    }
+  }
+
+  await db
+    .update(platformWalletTransactions)
+    .set({
+      status: 'CONFIRMED',
+      confirmations: sql`${head} - ${platformWalletTransactions.blockNumber} + 1`,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(platformWalletTransactions.chainId, settings.chainId),
+        eq(platformWalletTransactions.status, 'PENDING'),
+        sql`${platformWalletTransactions.blockNumber} is not null and ${platformWalletTransactions.blockNumber} <= ${finalized}`,
+      ),
+    )
 
   if (fromBlock <= toBlock && addressRows.length > 0) {
     // Some public BSC nodes reject OR filters containing multiple recipient
@@ -395,5 +625,6 @@ export async function runChainWorker() {
     swept,
     withdrawalsBroadcast,
     treasuryBroadcast,
+    platformTransactions,
   }
 }
