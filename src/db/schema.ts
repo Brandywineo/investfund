@@ -85,6 +85,18 @@ export const platformTransactionStatus = pgEnum('platform_transaction_status', [
   'CONFIRMED',
   'FAILED',
 ])
+export const tradingPositionStatus = pgEnum('trading_position_status', [
+  'OPEN',
+  'CLOSED',
+  'CANCELLED',
+])
+export const investmentExitStatus = pgEnum('investment_exit_status', [
+  'REQUESTED',
+  'DEFERRED',
+  'APPROVED',
+  'REJECTED',
+  'CANCELLED',
+])
 
 const timestamps = {
   createdAt: timestamp('created_at', { withTimezone: true })
@@ -172,6 +184,12 @@ export const platformSettings = pgTable('platform_settings', {
     .default('5000')
     .notNull(),
   compoundingEnabled: boolean('compounding_enabled').default(true).notNull(),
+  withdrawalFeePercent: numeric('withdrawal_fee_percent', {
+    precision: 9,
+    scale: 6,
+  })
+    .default('5')
+    .notNull(),
   ...timestamps,
 })
 
@@ -389,6 +407,67 @@ export const dailyAccruals = pgTable(
       table.investmentId,
       table.accrualDate,
     ),
+  ],
+)
+
+export const investmentExitRequests = pgTable(
+  'investment_exit_requests',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    investmentId: uuid('investment_id')
+      .references(() => investments.id, { onDelete: 'restrict' })
+      .notNull(),
+    userId: uuid('user_id')
+      .references(() => users.id, { onDelete: 'restrict' })
+      .notNull(),
+    status: investmentExitStatus('status').default('REQUESTED').notNull(),
+    userNote: text('user_note'),
+    decisionReason: text('decision_reason'),
+    reviewAfter: timestamp('review_after', { withTimezone: true }),
+    reviewedBy: uuid('reviewed_by').references(() => users.id),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+    releasedAmount: numeric('released_amount', { precision: 20, scale: 8 }),
+    releaseLedgerTransactionId: uuid(
+      'release_ledger_transaction_id',
+    ).references(() => ledgerTransactions.id),
+    ...timestamps,
+  },
+  (table) => [
+    index('investment_exit_user_status_idx').on(table.userId, table.status),
+    uniqueIndex('investment_exit_active_unique')
+      .on(table.investmentId)
+      .where(sql`${table.status} in ('REQUESTED', 'DEFERRED')`),
+  ],
+)
+
+export const tradingPositions = pgTable(
+  'trading_positions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    symbol: text('symbol').notNull(),
+    side: text('side').notNull(),
+    entryPrice: numeric('entry_price', { precision: 30, scale: 10 }).notNull(),
+    currentPrice: numeric('current_price', { precision: 30, scale: 10 }),
+    stopLoss: numeric('stop_loss', { precision: 30, scale: 10 }),
+    takeProfit: numeric('take_profit', { precision: 30, scale: 10 }),
+    sizeLabel: text('size_label'),
+    status: tradingPositionStatus('status').default('OPEN').notNull(),
+    pnlPercent: numeric('pnl_percent', { precision: 12, scale: 6 }),
+    note: text('note'),
+    openedAt: timestamp('opened_at', { withTimezone: true }).notNull(),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    createdBy: uuid('created_by')
+      .references(() => users.id)
+      .notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    index('trading_positions_status_opened_idx').on(
+      table.status,
+      table.openedAt,
+    ),
+    check('trading_position_side', sql`${table.side} in ('BUY', 'SELL')`),
+    check('trading_position_entry_positive', sql`${table.entryPrice} > 0`),
   ],
 )
 
@@ -680,6 +759,15 @@ export const withdrawals = pgTable(
       .references(() => users.id, { onDelete: 'restrict' })
       .notNull(),
     amount: numeric('amount', { precision: 20, scale: 8 }).notNull(),
+    feePercent: numeric('fee_percent', { precision: 9, scale: 6 })
+      .default('0')
+      .notNull(),
+    feeAmount: numeric('fee_amount', { precision: 20, scale: 8 })
+      .default('0')
+      .notNull(),
+    netAmount: numeric('net_amount', { precision: 20, scale: 8 })
+      .default('0')
+      .notNull(),
     destinationAddress: text('destination_address').notNull(),
     network: text('network').default('BEP20').notNull(),
     status: withdrawalStatus('status').default('REQUESTED').notNull(),
@@ -703,6 +791,7 @@ export const withdrawals = pgTable(
     uniqueIndex('withdrawals_tx_hash_unique').on(table.txHash),
     index('withdrawals_user_status_idx').on(table.userId, table.status),
     check('withdrawal_amount_positive', sql`${table.amount} > 0`),
+    check('withdrawal_net_amount_positive', sql`${table.netAmount} > 0`),
   ],
 )
 

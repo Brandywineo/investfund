@@ -29,6 +29,7 @@ function WalletPage() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [destinationAddress, setDestinationAddress] = useState('')
+  const [withdrawalAmount, setWithdrawalAmount] = useState('')
   async function run(action: () => Promise<unknown>, success: string) {
     setBusy(true)
     setError('')
@@ -115,6 +116,8 @@ function WalletPage() {
               Amount
               <input
                 name="amount"
+                value={withdrawalAmount}
+                onChange={(event) => setWithdrawalAmount(event.target.value)}
                 inputMode="decimal"
                 min={Number(data.settings.minimumWithdrawalAmount)}
                 step="0.00000001"
@@ -139,6 +142,39 @@ function WalletPage() {
             >
               Request withdrawal
             </button>
+            {Number(withdrawalAmount) > 0 && (
+              <div className="mt-4 rounded-xl bg-[#f4f6f2] p-4 text-sm">
+                <div className="flex justify-between">
+                  <span>Requested</span>
+                  <b>{Number(withdrawalAmount).toFixed(2)} USDT</b>
+                </div>
+                <div className="mt-2 flex justify-between">
+                  <span>
+                    Platform fee (
+                    {Number(data.settings.withdrawalFeePercent).toFixed(2)}%)
+                  </span>
+                  <b>
+                    −
+                    {(
+                      (Number(withdrawalAmount) *
+                        Number(data.settings.withdrawalFeePercent)) /
+                      100
+                    ).toFixed(2)}{' '}
+                    USDT
+                  </b>
+                </div>
+                <div className="mt-2 flex justify-between border-t border-black/8 pt-2">
+                  <span>You receive</span>
+                  <b>
+                    {(
+                      Number(withdrawalAmount) *
+                      (1 - Number(data.settings.withdrawalFeePercent) / 100)
+                    ).toFixed(2)}{' '}
+                    USDT
+                  </b>
+                </div>
+              </div>
+            )}
             <p className="mt-4 text-xs text-[#6e857a]">
               Minimum {Number(data.settings.minimumWithdrawalAmount).toFixed(2)}{' '}
               USDT. Funds are locked immediately, then sent automatically after
@@ -189,6 +225,10 @@ function WalletPage() {
                       </div>
                       <p className="mt-2 break-all font-mono text-xs text-[#6e857a]">
                         {item.destinationAddress}
+                      </p>
+                      <p className="mt-2 text-xs text-[#6e857a]">
+                        Fee {Number(item.feeAmount).toFixed(2)} · sends{' '}
+                        {Number(item.netAmount).toFixed(2)} USDT
                       </p>
                       {item.status === 'REQUESTED' && (
                         <button

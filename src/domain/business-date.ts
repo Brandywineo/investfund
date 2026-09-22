@@ -1,13 +1,18 @@
 export const DEFAULT_BUSINESS_TIMEZONE = 'Africa/Nairobi'
 
-export function businessDateKey(at: Date, timeZone = DEFAULT_BUSINESS_TIMEZONE): string {
+export function businessDateKey(
+  at: Date,
+  timeZone = DEFAULT_BUSINESS_TIMEZONE,
+): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
   }).formatToParts(at)
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  const values = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  )
   return `${values.year}-${values.month}-${values.day}`
 }
 

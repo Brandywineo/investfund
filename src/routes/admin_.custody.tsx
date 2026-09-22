@@ -456,9 +456,9 @@ function CustodyAdminPage() {
           {data.withdrawals.map((item) => (
             <Row
               key={item.id}
-              title={`${item.userEmail} · ${Number(item.amount).toFixed(2)} USDT`}
+              title={`${item.userEmail} · ${Number(item.amount).toFixed(2)} USDT requested · ${Number(item.netAmount).toFixed(2)} USDT sends`}
               status={item.status}
-              detail={item.destinationAddress}
+              detail={`${item.destinationAddress} · fee ${Number(item.feeAmount).toFixed(2)} USDT (${Number(item.feePercent).toFixed(2)}%)`}
             >
               <div className="grid min-w-52 gap-2">
                 <CopyButton value={item.destinationAddress} />

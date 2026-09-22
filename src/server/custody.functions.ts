@@ -10,6 +10,7 @@ import {
   deposits,
   ledgerAccounts,
   ledgerEntries,
+  platformSettings,
   treasuryTransfers,
   users,
   walletAddresses,
@@ -63,33 +64,45 @@ export const getCustodyAccount = createServerFn({ method: 'GET' }).handler(
   async () => {
     const user = await requireUser()
     const db = getDb()
-    const [settings, userDeposits, userWithdrawals] = await Promise.all([
-      db
-        .select()
-        .from(custodySettings)
-        .where(eq(custodySettings.id, 1))
-        .limit(1)
-        .then((rows) => rows.at(0)),
-      db
-        .select()
-        .from(deposits)
-        .where(eq(deposits.userId, user.id))
-        .orderBy(desc(deposits.createdAt))
-        .limit(50),
-      db
-        .select()
-        .from(withdrawals)
-        .where(eq(withdrawals.userId, user.id))
-        .orderBy(desc(withdrawals.createdAt))
-        .limit(50),
-    ])
+    const [settings, investmentSettings, userDeposits, userWithdrawals] =
+      await Promise.all([
+        db
+          .select()
+          .from(custodySettings)
+          .where(eq(custodySettings.id, 1))
+          .limit(1)
+          .then((rows) => rows.at(0)),
+        db
+          .select({
+            withdrawalFeePercent: platformSettings.withdrawalFeePercent,
+          })
+          .from(platformSettings)
+          .where(eq(platformSettings.id, 1))
+          .limit(1)
+          .then((rows) => rows.at(0)),
+        db
+          .select()
+          .from(deposits)
+          .where(eq(deposits.userId, user.id))
+          .orderBy(desc(deposits.createdAt))
+          .limit(50),
+        db
+          .select()
+          .from(withdrawals)
+          .where(eq(withdrawals.userId, user.id))
+          .orderBy(desc(withdrawals.createdAt))
+          .limit(50),
+      ])
     if (!settings) throw new Error('Custody settings are not initialized')
     let walletAddress: string | null = null
     if (process.env.SIGNER_URL && process.env.SIGNER_API_TOKEN) {
       walletAddress = (await getOrCreateWalletAddress(user.id))?.address ?? null
     }
     return {
-      settings,
+      settings: {
+        ...settings,
+        withdrawalFeePercent: investmentSettings?.withdrawalFeePercent ?? '5',
+      },
       depositAddress: walletAddress ?? settings.depositAddress,
       automatedDeposits: Boolean(walletAddress),
       deposits: userDeposits,
@@ -132,12 +145,20 @@ export const requestWithdrawal = createServerFn({ method: 'POST' })
   )
   .handler(async ({ data }) => {
     const user = await requireUser()
-    const settings = await getDb()
-      .select()
-      .from(custodySettings)
-      .where(eq(custodySettings.id, 1))
-      .limit(1)
-      .then((rows) => rows.at(0))
+    const [settings, investmentSettings] = await Promise.all([
+      getDb()
+        .select()
+        .from(custodySettings)
+        .where(eq(custodySettings.id, 1))
+        .limit(1)
+        .then((rows) => rows.at(0)),
+      getDb()
+        .select({ withdrawalFeePercent: platformSettings.withdrawalFeePercent })
+        .from(platformSettings)
+        .where(eq(platformSettings.id, 1))
+        .limit(1)
+        .then((rows) => rows.at(0)),
+    ])
     if (!settings) throw new Error('Custody settings are not initialized')
     if (money(data.amount).lessThan(settings.minimumWithdrawalAmount))
       throw new Error(
@@ -148,6 +169,7 @@ export const requestWithdrawal = createServerFn({ method: 'POST' })
       amount: data.amount,
       destinationAddress: data.destinationAddress,
       network: settings.network,
+      feePercent: investmentSettings?.withdrawalFeePercent ?? '5',
     })
     return { success: true, withdrawalId: withdrawal.id }
   })
@@ -248,6 +270,9 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
           id: withdrawals.id,
           userEmail: users.email,
           amount: withdrawals.amount,
+          feeAmount: withdrawals.feeAmount,
+          netAmount: withdrawals.netAmount,
+          feePercent: withdrawals.feePercent,
           destinationAddress: withdrawals.destinationAddress,
           txHash: withdrawals.txHash,
           status: withdrawals.status,

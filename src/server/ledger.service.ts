@@ -153,6 +153,9 @@ export async function postDailyAccrual(
   accrualDate: Date,
 ) {
   return getDb().transaction(async (tx) => {
+    await tx.execute(
+      sql`select id from investments where id = ${investmentId} for update`,
+    )
     const investment = (
       await tx
         .select()

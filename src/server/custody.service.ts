@@ -10,6 +10,7 @@ import {
   withdrawals,
 } from '#/db/schema'
 import { money } from '#/domain/money'
+import { calculateWithdrawal } from '#/domain/withdrawal'
 import { postLedgerTransaction } from './ledger.service'
 
 type TransactionExecutor = Parameters<Parameters<Database['transaction']>[0]>[0]
@@ -131,7 +132,9 @@ export async function approveWithdrawal(
     if (!withdrawal.reservationLedgerTransactionId)
       throw new Error('Withdrawal funds have not been reserved')
     if (
-      money(await balance(tx, hotWallet, 'DEBIT')).lessThan(withdrawal.amount)
+      money(await balance(tx, hotWallet, 'DEBIT')).lessThan(
+        withdrawal.netAmount,
+      )
     )
       throw new Error(
         'Hot-wallet liquidity is insufficient; leave this request queued',
@@ -162,8 +165,10 @@ export async function reserveWithdrawalRequest(input: {
   amount: string
   destinationAddress: string
   network: string
+  feePercent: string
 }) {
   return getDb().transaction(async (tx) => {
+    const calculated = calculateWithdrawal(input.amount, input.feePercent)
     const available = await account(tx, `USER:${input.userId}:AVAILABLE`)
     const reserved = await account(tx, 'PLATFORM:WITHDRAWAL_RESERVED')
     await tx.execute(
@@ -173,7 +178,15 @@ export async function reserveWithdrawalRequest(input: {
       throw new Error('Insufficient available balance')
     const withdrawal = await tx
       .insert(withdrawals)
-      .values(input)
+      .values({
+        userId: input.userId,
+        amount: calculated.gross.toString(),
+        feePercent: calculated.rate.toString(),
+        feeAmount: calculated.fee.toString(),
+        netAmount: calculated.net.toString(),
+        destinationAddress: input.destinationAddress,
+        network: input.network,
+      })
       .returning({ id: withdrawals.id })
       .then((rows) => rows.at(0))
     if (!withdrawal) throw new Error('Could not create withdrawal request')
@@ -203,6 +216,8 @@ export async function reserveWithdrawalRequest(input: {
       {
         status: 'REQUESTED',
         amount: input.amount,
+        feeAmount: calculated.fee.toString(),
+        netAmount: calculated.net.toString(),
         destinationAddress: input.destinationAddress,
       },
     )
@@ -226,6 +241,7 @@ export async function broadcastWithdrawal(
       throw new Error('Processing withdrawal not found')
     const reserved = await account(tx, 'PLATFORM:WITHDRAWAL_RESERVED')
     const hotWallet = await account(tx, 'PLATFORM:HOT_WALLET')
+    const feeRevenue = await account(tx, 'PLATFORM:WITHDRAWAL_FEE_REVENUE')
     const ledger = await postLedgerTransaction(tx, {
       eventType: 'WITHDRAWAL_BROADCAST',
       referenceType: 'withdrawal',
@@ -243,8 +259,17 @@ export async function broadcastWithdrawal(
         {
           accountId: hotWallet,
           side: 'CREDIT',
-          amount: money(withdrawal.amount),
+          amount: money(withdrawal.netAmount),
         },
+        ...(money(withdrawal.feeAmount).greaterThan(0)
+          ? [
+              {
+                accountId: feeRevenue,
+                side: 'CREDIT' as const,
+                amount: money(withdrawal.feeAmount),
+              },
+            ]
+          : []),
       ],
     })
     await tx
@@ -416,6 +441,7 @@ export async function settleBroadcastWithdrawal(
 
     const hotWallet = await account(tx, 'PLATFORM:HOT_WALLET')
     const available = await account(tx, `USER:${withdrawal.userId}:AVAILABLE`)
+    const feeRevenue = await account(tx, 'PLATFORM:WITHDRAWAL_FEE_REVENUE')
     await postLedgerTransaction(tx, {
       eventType: 'WITHDRAWAL_BROADCAST_REVERTED',
       referenceType: 'withdrawal',
@@ -427,8 +453,17 @@ export async function settleBroadcastWithdrawal(
         {
           accountId: hotWallet,
           side: 'DEBIT',
-          amount: money(withdrawal.amount),
+          amount: money(withdrawal.netAmount),
         },
+        ...(money(withdrawal.feeAmount).greaterThan(0)
+          ? [
+              {
+                accountId: feeRevenue,
+                side: 'DEBIT' as const,
+                amount: money(withdrawal.feeAmount),
+              },
+            ]
+          : []),
         {
           accountId: available,
           side: 'CREDIT',

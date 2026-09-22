@@ -227,7 +227,7 @@ async function withdraw(withdrawalId: string) {
       const prepared = await signTokenTransfer(
         settings.tokenContractAddress,
         withdrawal.destinationAddress,
-        withdrawal.amount,
+        withdrawal.netAmount,
       )
       withdrawal = await db
         .update(withdrawals)
@@ -256,7 +256,7 @@ async function withdraw(withdrawalId: string) {
       withdrawal.txHash,
       withdrawal.reviewedBy!,
     )
-    return { txHash: withdrawal.txHash, amount: withdrawal.amount }
+    return { txHash: withdrawal.txHash, amount: withdrawal.netAmount }
   } catch (cause) {
     if (originalWithdrawal.status === 'APPROVED') {
       await db

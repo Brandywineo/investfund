@@ -167,16 +167,24 @@ function Home() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-[#557065]">Trading desk</p>
-                <h2 className="mt-1 text-xl font-semibold">Not configured</h2>
+                <h2 className="mt-1 text-xl font-semibold">
+                  {portfolio.openPositionCount
+                    ? `${portfolio.openPositionCount} open position${portfolio.openPositionCount === 1 ? '' : 's'}`
+                    : 'No open positions'}
+                </h2>
               </div>
               <span className="rounded-full bg-[#eef1eb] px-3 py-1.5 text-xs font-bold text-[#557065]">
-                PLANNED
+                {portfolio.openPositionCount ? 'LIVE' : 'READY'}
               </span>
             </div>
             <p className="mt-8 text-sm leading-6 text-[#557065]">
-              Manual strategy reporting and transparent positions will appear
-              here after the trading desk milestone is enabled.
+              {portfolio.openPositionCount
+                ? `${portfolio.latestPositionSymbol} is the latest position reported by the trading desk.`
+                : 'The trading desk is ready. New positions appear here after an administrator publishes them.'}
             </p>
+            <Link to="/trading" className="mt-5 inline-block text-sm font-bold">
+              View trading desk →
+            </Link>
           </article>
 
           <article className="rounded-[2rem] bg-white p-7 ring-1 ring-black/5 md:p-8">

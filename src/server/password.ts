@@ -1,4 +1,8 @@
-import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto'
+import {
+  randomBytes,
+  scrypt as scryptCallback,
+  timingSafeEqual,
+} from 'node:crypto'
 import { promisify } from 'node:util'
 
 const scrypt = promisify(scryptCallback)
@@ -10,7 +14,10 @@ export async function hashPassword(password: string): Promise<string> {
   return `scrypt$${salt.toString('base64url')}$${derived.toString('base64url')}`
 }
 
-export async function verifyPassword(password: string, stored: string): Promise<boolean> {
+export async function verifyPassword(
+  password: string,
+  stored: string,
+): Promise<boolean> {
   const [algorithm, saltEncoded, hashEncoded] = stored.split('$')
   if (algorithm !== 'scrypt' || !saltEncoded || !hashEncoded) return false
 

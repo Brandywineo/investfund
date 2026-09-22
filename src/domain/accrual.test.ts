@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { accrualIdempotencyKey, calculateDailyAccrual, validateInvestmentAmount } from './accrual'
+import {
+  accrualIdempotencyKey,
+  calculateDailyAccrual,
+  validateInvestmentAmount,
+} from './accrual'
 
 describe('daily accrual', () => {
   it('compounds 1,000 USDT at 2% for two daily postings', () => {
@@ -13,8 +17,12 @@ describe('daily accrual', () => {
   })
 
   it('enforces the configured minimum and maximum', () => {
-    expect(validateInvestmentAmount('300', '300', '5000').toFixed(2)).toBe('300.00')
-    expect(validateInvestmentAmount('5000', '300', '5000').toFixed(2)).toBe('5000.00')
+    expect(validateInvestmentAmount('300', '300', '5000').toFixed(2)).toBe(
+      '300.00',
+    )
+    expect(validateInvestmentAmount('5000', '300', '5000').toFixed(2)).toBe(
+      '5000.00',
+    )
     expect(() => validateInvestmentAmount('299.99', '300', '5000')).toThrow()
     expect(() => validateInvestmentAmount('5000.01', '300', '5000')).toThrow()
   })

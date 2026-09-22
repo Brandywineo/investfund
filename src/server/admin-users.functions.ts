@@ -90,16 +90,14 @@ export const updateUserAccess = createServerFn({ method: 'POST' })
         .update(users)
         .set({ role: data.role, status: data.status, updatedAt: new Date() })
         .where(eq(users.id, data.userId))
-      await tx
-        .insert(auditLogs)
-        .values({
-          actorUserId: admin.id,
-          action: 'USER_ACCESS_UPDATED',
-          entityType: 'user',
-          entityId: data.userId,
-          before: target,
-          after: { role: data.role, status: data.status },
-        })
+      await tx.insert(auditLogs).values({
+        actorUserId: admin.id,
+        action: 'USER_ACCESS_UPDATED',
+        entityType: 'user',
+        entityId: data.userId,
+        before: target,
+        after: { role: data.role, status: data.status },
+      })
     })
     return { success: true }
   })

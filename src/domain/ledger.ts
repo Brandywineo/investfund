@@ -10,7 +10,8 @@ export interface LedgerLine {
 }
 
 export function assertBalanced(lines: ReadonlyArray<LedgerLine>): void {
-  if (lines.length < 2) throw new Error('A ledger transaction needs at least two entries')
+  if (lines.length < 2)
+    throw new Error('A ledger transaction needs at least two entries')
 
   const debit = lines
     .filter((line) => line.side === 'DEBIT')
@@ -23,6 +24,8 @@ export function assertBalanced(lines: ReadonlyArray<LedgerLine>): void {
     throw new Error('Ledger entry amounts must be positive')
   }
   if (!debit.equals(credit)) {
-    throw new Error(`Ledger transaction is unbalanced: debit ${debit} does not equal credit ${credit}`)
+    throw new Error(
+      `Ledger transaction is unbalanced: debit ${debit} does not equal credit ${credit}`,
+    )
   }
 }

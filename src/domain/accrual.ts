@@ -38,11 +38,16 @@ export function validateInvestmentAmount(
 
   if (min.greaterThan(max)) throw new Error('Investment limits are invalid')
   if (normalized.lessThan(min) || normalized.greaterThan(max)) {
-    throw new Error(`Investment must be between ${min.toFixed(2)} and ${max.toFixed(2)} USDT`)
+    throw new Error(
+      `Investment must be between ${min.toFixed(2)} and ${max.toFixed(2)} USDT`,
+    )
   }
   return normalized
 }
 
-export function accrualIdempotencyKey(investmentId: string, accrualDate: string): string {
+export function accrualIdempotencyKey(
+  investmentId: string,
+  accrualDate: string,
+): string {
   return `daily-accrual:${investmentId}:${accrualDate.slice(0, 10)}`
 }

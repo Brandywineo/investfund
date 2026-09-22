@@ -10,6 +10,7 @@ import {
   getAdminInvestmentSettings,
   setDailyRate,
   updateInvestmentSettings,
+  updateWithdrawalFee,
 } from '#/server/admin.functions'
 import { currentUser } from '#/server/auth.functions'
 import { runDailyAccruals } from '#/server/accrual-runner.functions'
@@ -83,6 +84,17 @@ function AdminPage() {
         )
     }, 'Daily accrual batch completed.')
   }
+  function updateFee(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    return run(
+      () =>
+        updateWithdrawalFee({
+          data: { feePercent: Number(form.get('feePercent')) },
+        }),
+      'Withdrawal fee updated.',
+    )
+  }
 
   const inputClass =
     'mt-2 w-full rounded-2xl border border-black/10 bg-[#f8faf7] px-4 py-3.5 outline-none focus:border-[#85ae38] focus:ring-4 focus:ring-[#85ae38]/15'
@@ -105,10 +117,45 @@ function AdminPage() {
             <Link to="/admin/wallets">Platform wallets</Link>
             <Link to="/admin/custody">Custody</Link>
             <Link to="/admin/referrals">Referrals</Link>
+            <Link to="/admin/trading">Trading positions</Link>
+            <Link to="/admin/exits">Exit requests</Link>
             <Link to="/admin/users">Manage users</Link>
             <Link to="/app">Dashboard →</Link>
           </nav>
         </div>
+        <form
+          onSubmit={updateFee}
+          className="mt-5 flex flex-col justify-between gap-5 rounded-[2rem] bg-white p-7 ring-1 ring-black/5 md:flex-row md:items-end"
+        >
+          <div>
+            <p className="text-sm font-semibold text-[#6e857a]">
+              Withdrawal policy
+            </p>
+            <h2 className="mt-1 text-2xl font-semibold">Platform fee</h2>
+            <p className="mt-2 text-sm text-[#6e857a]">
+              Each request stores the fee rate and amount permanently when
+              submitted.
+            </p>
+          </div>
+          <label className="text-sm font-semibold">
+            Fee percentage
+            <input
+              name="feePercent"
+              type="number"
+              min="0"
+              max="25"
+              step="0.01"
+              defaultValue={data.settings.withdrawalFeePercent}
+              className={inputClass}
+            />
+          </label>
+          <button
+            disabled={busy}
+            className="rounded-2xl bg-[#123d2d] px-6 py-3.5 font-bold text-white"
+          >
+            Save fee
+          </button>
+        </form>
         {(message || error) && (
           <p
             className={`mt-6 rounded-2xl p-4 text-sm ${error ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}
