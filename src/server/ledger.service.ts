@@ -230,6 +230,11 @@ export async function postDailyAccrual(
       tx,
       'PLATFORM:REFERRAL_EXPENSE',
     )
+    const commissions: Array<{
+      userId: string
+      level: number
+      amount: string
+    }> = []
     let referredUserId = investment.userId
     for (const level of [1, 2, 3] as const) {
       const relationship = (
@@ -268,6 +273,11 @@ export async function postDailyAccrual(
           amount: amount.toString(),
           ledgerTransactionId: commissionLedger.id,
         })
+        commissions.push({
+          userId: relationship.referrerUserId,
+          level,
+          amount: amount.toString(),
+        })
       }
       referredUserId = relationship.referrerUserId
     }
@@ -279,6 +289,12 @@ export async function postDailyAccrual(
         updatedAt: new Date(),
       })
       .where(eq(investments.id, investmentId))
-    return result
+    return {
+      ...result,
+      investmentId,
+      userId: investment.userId,
+      accrualId: accrual.id,
+      commissions,
+    }
   })
 }

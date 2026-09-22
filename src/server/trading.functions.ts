@@ -2,8 +2,9 @@ import { createServerFn } from '@tanstack/react-start'
 import { and, asc, desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { getDb } from '#/db'
-import { auditLogs, investments, tradingPositions } from '#/db/schema'
+import { auditLogs, investments, tradingPositions, users } from '#/db/schema'
 import { getSessionUser } from './session'
+import { notifyUser } from './notification.service'
 
 const optionalPrice = z
   .string()
@@ -107,6 +108,22 @@ export const createTradingPosition = createServerFn({ method: 'POST' })
       entityId: position.id,
       after: data,
     })
+    const recipients = await getDb()
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.status, 'ACTIVE'))
+    await Promise.allSettled(
+      recipients.map((recipient) =>
+        notifyUser({
+          userId: recipient.id,
+          category: 'TRADING',
+          title: `New ${data.side} position: ${data.symbol.toUpperCase()}`,
+          body: `Entry ${data.entryPrice}. Open the trading desk for the complete position details.`,
+          href: '/trading',
+          eventKey: `trading-position:${position.id}:opened`,
+        }),
+      ),
+    )
     return { success: true, positionId: position.id }
   })
 

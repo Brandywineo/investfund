@@ -7,10 +7,13 @@ import {
   investmentExitRequests,
   investments,
   ledgerAccounts,
+  ledgerEntries,
+  platformSettings,
   users,
 } from '#/db/schema'
 import { formatUsdt, money } from '#/domain/money'
 import { postLedgerTransaction } from './ledger.service'
+import { notifyUser } from './notification.service'
 import { getSessionUser } from './session'
 
 async function requireUser() {
@@ -130,6 +133,100 @@ export const releaseInvestmentProfit = createServerFn({ method: 'POST' })
         entityType: 'investment',
         entityId: investment.id,
         after: { amount: profit.toString(), ledgerTransactionId: ledger.id },
+      })
+    })
+    return { success: true }
+  })
+
+export const addFundsToInvestment = createServerFn({ method: 'POST' })
+  .validator(
+    z.object({
+      investmentId: z.string().uuid(),
+      amount: z
+        .string()
+        .trim()
+        .refine((value) => Number(value) > 0, 'Amount must be positive'),
+      requestId: z.string().uuid(),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const user = await requireUser()
+    await getDb().transaction(async (tx) => {
+      await tx.execute(
+        sql`select id from investments where id = ${data.investmentId} for update`,
+      )
+      const investment = await tx
+        .select()
+        .from(investments)
+        .where(
+          and(
+            eq(investments.id, data.investmentId),
+            eq(investments.userId, user.id),
+            eq(investments.status, 'ACTIVE'),
+          ),
+        )
+        .limit(1)
+        .then((rows) => rows.at(0))
+      if (!investment) throw new Error('Active investment not found')
+      const amount = money(data.amount).toDecimalPlaces(8)
+      if (!amount.isFinite() || amount.lte(0))
+        throw new Error('Amount must be positive')
+      const settings = await tx
+        .select()
+        .from(platformSettings)
+        .where(eq(platformSettings.id, 1))
+        .limit(1)
+        .then((rows) => rows.at(0))
+      if (!settings) throw new Error('Platform settings are missing')
+      if (
+        money(investment.principal).plus(amount).gt(settings.maximumInvestment)
+      )
+        throw new Error(
+          `Investment principal cannot exceed ${settings.maximumInvestment} USDT`,
+        )
+      const available = await account(tx, `USER:${user.id}:AVAILABLE`)
+      const invested = await account(tx, `USER:${user.id}:INVESTED`)
+      await tx.execute(
+        sql`select id from ledger_accounts where id = ${available} for update`,
+      )
+      const availableBalance = await tx
+        .select({
+          balance: sql<string>`coalesce(sum(${ledgerEntries.credit} - ${ledgerEntries.debit}), 0)`,
+        })
+        .from(ledgerEntries)
+        .where(eq(ledgerEntries.accountId, available))
+        .then((rows) => rows.at(0)?.balance ?? '0')
+      if (money(availableBalance).lt(amount))
+        throw new Error('Insufficient available balance')
+      const ledger = await postLedgerTransaction(tx, {
+        eventType: 'INVESTMENT_FUNDS_ADDED',
+        referenceType: 'investment',
+        referenceId: investment.id,
+        idempotencyKey: `investment-add:${data.requestId}`,
+        description: 'Add available funds to active investment',
+        effectiveAt: new Date(),
+        createdBy: user.id,
+        lines: [
+          { accountId: available, side: 'DEBIT', amount },
+          { accountId: invested, side: 'CREDIT', amount },
+        ],
+      })
+      await tx
+        .update(investments)
+        .set({
+          principal: money(investment.principal).plus(amount).toString(),
+          compoundedBalance: money(investment.compoundedBalance)
+            .plus(amount)
+            .toString(),
+          updatedAt: new Date(),
+        })
+        .where(eq(investments.id, investment.id))
+      await tx.insert(auditLogs).values({
+        actorUserId: user.id,
+        action: 'INVESTMENT_FUNDS_ADDED',
+        entityType: 'investment',
+        entityId: investment.id,
+        after: { amount: amount.toString(), ledgerTransactionId: ledger.id },
       })
     })
     return { success: true }
@@ -321,5 +418,26 @@ export const reviewInvestmentExit = createServerFn({ method: 'POST' })
         },
       })
     })
+    const reviewed = await getDb()
+      .select({ userId: investmentExitRequests.userId })
+      .from(investmentExitRequests)
+      .where(eq(investmentExitRequests.id, data.requestId))
+      .limit(1)
+      .then((rows) => rows.at(0))
+    if (reviewed)
+      await Promise.allSettled([
+        notifyUser({
+          userId: reviewed.userId,
+          category: 'INVESTMENT',
+          title: `Investment exit ${data.action === 'APPROVE' ? 'approved' : data.action === 'DEFER' ? 'deferred' : 'rejected'}`,
+          body:
+            data.reason ||
+            (data.action === 'APPROVE'
+              ? 'Your investment balance was released to your available balance.'
+              : 'Your investment exit request was reviewed.'),
+          href: '/invest',
+          eventKey: `investment-exit:${data.requestId}:${data.action.toLowerCase()}`,
+        }),
+      ])
     return { success: true }
   })

@@ -7,6 +7,7 @@ import {
   useNavigate,
 } from '@tanstack/react-router'
 import { changePassword, currentUser, logout } from '#/server/auth.functions'
+import { PwaInstall } from '#/components/PwaInstall'
 
 export const Route = createFileRoute('/account')({
   beforeLoad: async () => {
@@ -81,6 +82,22 @@ function AccountPage() {
                 Role
               </p>
               <p className="mt-1 font-semibold">{user.role}</p>
+            </div>
+          </div>
+          <div className="mt-7 rounded-2xl border border-black/8 p-5">
+            <h2 className="text-xl font-semibold">InvestFund app</h2>
+            <p className="mb-4 mt-2 text-sm text-[#6e857a]">
+              Install the secure web app on this device, then enable only the
+              notifications you want.
+            </p>
+            <div className="flex flex-wrap items-start gap-3">
+              <PwaInstall />
+              <Link
+                to="/notifications"
+                className="rounded-xl border border-black/10 px-5 py-3 text-sm font-bold"
+              >
+                Notification settings
+              </Link>
             </div>
           </div>
           <form onSubmit={submit} className="mt-7">

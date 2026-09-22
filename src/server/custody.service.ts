@@ -6,12 +6,14 @@ import {
   deposits,
   ledgerAccounts,
   ledgerEntries,
+  referralRelationships,
   treasuryTransfers,
   withdrawals,
 } from '#/db/schema'
 import { money } from '#/domain/money'
 import { calculateWithdrawal } from '#/domain/withdrawal'
 import { postLedgerTransaction } from './ledger.service'
+import { notifyUser } from './notification.service'
 
 type TransactionExecutor = Parameters<Parameters<Database['transaction']>[0]>[0]
 
@@ -57,7 +59,7 @@ async function audit(
 }
 
 export async function confirmDeposit(depositId: string, actorUserId?: string) {
-  return getDb().transaction(async (tx) => {
+  const confirmed = await getDb().transaction(async (tx) => {
     const deposit = await tx
       .select()
       .from(deposits)
@@ -106,7 +108,37 @@ export async function confirmDeposit(depositId: string, actorUserId?: string) {
       { status: deposit.status },
       { status: 'CONFIRMED', txHash: deposit.txHash, amount: deposit.amount },
     )
+    return deposit
   })
+  const sponsor = await getDb()
+    .select({ userId: referralRelationships.referrerUserId })
+    .from(referralRelationships)
+    .where(eq(referralRelationships.referredUserId, confirmed.userId))
+    .limit(1)
+    .then((rows) => rows.at(0))
+  await Promise.allSettled([
+    notifyUser({
+      userId: confirmed.userId,
+      category: 'SYSTEM',
+      title: 'Deposit confirmed',
+      body: `${money(confirmed.amount).toFixed(2)} USDT is now available.`,
+      href: '/wallet',
+      eventKey: `deposit:${confirmed.id}:confirmed`,
+    }),
+    ...(sponsor
+      ? [
+          notifyUser({
+            userId: sponsor.userId,
+            category: 'REFERRAL' as const,
+            title: 'Direct referral funded their account',
+            body: 'Your direct referral has made a confirmed deposit. Commission begins after they start investing and earn daily profit.',
+            href: '/referrals',
+            eventKey: `referral:${confirmed.userId}:first-deposit`,
+          }),
+        ]
+      : []),
+  ])
+  return confirmed
 }
 
 export async function approveWithdrawal(

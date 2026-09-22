@@ -1,6 +1,7 @@
 import { createFileRoute, redirect, Link } from '@tanstack/react-router'
 import { currentUser } from '#/server/auth.functions'
 import { getPortfolio } from '#/server/portfolio.functions'
+import { PwaInstall } from '#/components/PwaInstall'
 
 export const Route = createFileRoute('/app')({
   beforeLoad: async () => {
@@ -63,6 +64,7 @@ function Home() {
             <Link to="/community">Community</Link>
             <Link to="/ledger">Ledger</Link>
             <Link to="/account">Account</Link>
+            <Link to="/notifications">Notifications</Link>
             {user.role === 'ADMIN' ? <Link to="/admin">Admin</Link> : null}
           </div>
           <Link
@@ -76,6 +78,19 @@ function Home() {
       </nav>
 
       <section className="mx-auto max-w-7xl px-5 py-8 md:px-10 md:py-12">
+        {Date.now() - new Date(user.createdAt).getTime() <
+          24 * 60 * 60 * 1000 && (
+          <div className="mb-5 flex flex-col gap-4 rounded-2xl bg-white p-5 ring-1 ring-black/5 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-semibold">Get the InvestFund app</p>
+              <p className="mt-1 text-sm text-[#6e857a]">
+                Install it for faster access. You choose whether to enable
+                notifications.
+              </p>
+            </div>
+            <PwaInstall compact />
+          </div>
+        )}
         <div className="mb-8 flex flex-col justify-between gap-4 md:flex-row md:items-end">
           <div>
             <p className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-[#648174]">

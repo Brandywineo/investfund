@@ -34,6 +34,7 @@ import {
   releaseApprovedWithdrawal,
 } from './custody.service'
 import { getSessionUser } from './session'
+import { notifyUser } from './notification.service'
 import { requestWalletSweep } from './signer-api'
 import { getOrCreateWalletAddress } from './wallet-address.service'
 
@@ -615,5 +616,24 @@ export const reviewWithdrawal = createServerFn({ method: 'POST' })
         admin.id,
         data.reference || 'Rejected by administrator',
       )
+    const reviewed = await getDb()
+      .select({ userId: withdrawals.userId, status: withdrawals.status })
+      .from(withdrawals)
+      .where(eq(withdrawals.id, data.withdrawalId))
+      .limit(1)
+      .then((rows) => rows.at(0))
+    if (reviewed)
+      await Promise.allSettled([
+        notifyUser({
+          userId: reviewed.userId,
+          category: 'WITHDRAWAL',
+          title: `Withdrawal ${reviewed.status.toLowerCase()}`,
+          body:
+            data.reference ||
+            `Your withdrawal is now ${reviewed.status.toLowerCase()}.`,
+          href: '/wallet',
+          eventKey: `withdrawal:${data.withdrawalId}:${reviewed.status.toLowerCase()}`,
+        }),
+      ])
     return { success: true }
   })

@@ -7,6 +7,7 @@ import {
   DEFAULT_BUSINESS_TIMEZONE,
 } from '#/domain/business-date'
 import { postDailyAccrual } from './ledger.service'
+import { notifyUser } from './notification.service'
 
 export async function runAccrualBatch(
   options: { businessDate?: string; actorUserId?: string } = {},
@@ -31,7 +32,27 @@ export async function runAccrualBatch(
   const failures: Array<{ investmentId: string; reason: string }> = []
   for (const investment of due) {
     try {
-      await postDailyAccrual(investment.id, accrualDate)
+      const result = await postDailyAccrual(investment.id, accrualDate)
+      await Promise.allSettled([
+        notifyUser({
+          userId: result.userId,
+          category: 'PROFIT',
+          title: 'Daily profit posted',
+          body: `${result.amount.toFixed(2)} USDT was added to your investment.`,
+          href: '/invest',
+          eventKey: `accrual:${result.accrualId}`,
+        }),
+        ...result.commissions.map((commission) =>
+          notifyUser({
+            userId: commission.userId,
+            category: 'REFERRAL',
+            title: 'Referral profit earned',
+            body: `${Number(commission.amount).toFixed(2)} USDT was added to your available balance from your Level ${commission.level} network.`,
+            href: '/referrals',
+            eventKey: `referral:${result.accrualId}:level:${commission.level}`,
+          }),
+        ),
+      ])
       posted += 1
     } catch (cause) {
       failures.push({

@@ -51,6 +51,7 @@ export async function getSessionUser() {
         displayName: users.displayName,
         role: users.role,
         status: users.status,
+        createdAt: users.createdAt,
       })
       .from(sessions)
       .innerJoin(users, eq(users.id, sessions.userId))

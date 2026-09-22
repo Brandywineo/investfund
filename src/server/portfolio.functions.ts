@@ -8,10 +8,12 @@ import {
   ledgerAccounts,
   ledgerEntries,
   platformSettings,
+  referralRelationships,
   tradingPositions,
 } from '#/db/schema'
 import { formatUsdt, money } from '#/domain/money'
 import { createInvestment } from './ledger.service'
+import { notifyUser } from './notification.service'
 import { getSessionUser } from './session'
 
 async function requireUser() {
@@ -131,5 +133,22 @@ export const activateInvestment = createServerFn({ method: 'POST' })
       data.amount,
       data.requestId,
     )
+    const sponsor = await getDb()
+      .select({ userId: referralRelationships.referrerUserId })
+      .from(referralRelationships)
+      .where(eq(referralRelationships.referredUserId, user.id))
+      .limit(1)
+      .then((rows) => rows.at(0))
+    if (sponsor)
+      await Promise.allSettled([
+        notifyUser({
+          userId: sponsor.userId,
+          category: 'REFERRAL',
+          title: 'Direct referral started investing',
+          body: 'Your direct referral is now active. Commission will be credited when their daily profit is posted.',
+          href: '/referrals',
+          eventKey: `referral:${user.id}:investment-activated`,
+        }),
+      ])
     return { success: true, investmentId: investment.id }
   })

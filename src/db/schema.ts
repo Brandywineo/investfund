@@ -97,6 +97,14 @@ export const investmentExitStatus = pgEnum('investment_exit_status', [
   'REJECTED',
   'CANCELLED',
 ])
+export const notificationCategory = pgEnum('notification_category', [
+  'TRADING',
+  'PROFIT',
+  'REFERRAL',
+  'WITHDRAWAL',
+  'INVESTMENT',
+  'SYSTEM',
+])
 
 const timestamps = {
   createdAt: timestamp('created_at', { withTimezone: true })
@@ -138,6 +146,69 @@ export const sessions = pgTable(
       .notNull(),
   },
   (table) => [index('sessions_user_id_idx').on(table.userId)],
+)
+
+export const notificationPreferences = pgTable('notification_preferences', {
+  userId: uuid('user_id')
+    .primaryKey()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  trading: boolean('trading').default(true).notNull(),
+  profit: boolean('profit').default(true).notNull(),
+  referral: boolean('referral').default(true).notNull(),
+  withdrawal: boolean('withdrawal').default(true).notNull(),
+  investment: boolean('investment').default(true).notNull(),
+  system: boolean('system').default(true).notNull(),
+  ...timestamps,
+})
+
+export const pushSubscriptions = pgTable(
+  'push_subscriptions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .references(() => users.id, { onDelete: 'cascade' })
+      .notNull(),
+    endpoint: text('endpoint').notNull(),
+    p256dh: text('p256dh').notNull(),
+    auth: text('auth').notNull(),
+    userAgent: text('user_agent'),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('push_subscriptions_endpoint_unique').on(table.endpoint),
+    index('push_subscriptions_user_idx').on(table.userId),
+  ],
+)
+
+export const notifications = pgTable(
+  'notifications',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .references(() => users.id, { onDelete: 'cascade' })
+      .notNull(),
+    category: notificationCategory('category').notNull(),
+    title: text('title').notNull(),
+    body: text('body').notNull(),
+    href: text('href').default('/app').notNull(),
+    eventKey: text('event_key').notNull(),
+    readAt: timestamp('read_at', { withTimezone: true }),
+    pushSentAt: timestamp('push_sent_at', { withTimezone: true }),
+    pushFailure: text('push_failure'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex('notifications_user_event_unique').on(
+      table.userId,
+      table.eventKey,
+    ),
+    index('notifications_user_created_idx').on(table.userId, table.createdAt),
+  ],
 )
 
 export const emailVerificationTokens = pgTable(

@@ -17,6 +17,7 @@ import { Route as CommunityRouteImport } from './routes/community'
 import { Route as InvestRouteImport } from './routes/invest'
 import { Route as LedgerRouteImport } from './routes/ledger'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as NotificationsRouteImport } from './routes/notifications'
 import { Route as ReferralsRouteImport } from './routes/referrals'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as TradingRouteImport } from './routes/trading'
@@ -66,6 +67,11 @@ const LedgerRoute = LedgerRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NotificationsRoute = NotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ReferralsRoute = ReferralsRouteImport.update({
@@ -128,6 +134,7 @@ export interface FileRoutesByFullPath {
   '/invest': typeof InvestRoute
   '/ledger': typeof LedgerRoute
   '/login': typeof LoginRoute
+  '/notifications': typeof NotificationsRoute
   '/referrals': typeof ReferralsRoute
   '/signup': typeof SignupRoute
   '/trading': typeof TradingRoute
@@ -148,6 +155,7 @@ export interface FileRoutesByTo {
   '/invest': typeof InvestRoute
   '/ledger': typeof LedgerRoute
   '/login': typeof LoginRoute
+  '/notifications': typeof NotificationsRoute
   '/referrals': typeof ReferralsRoute
   '/signup': typeof SignupRoute
   '/trading': typeof TradingRoute
@@ -169,6 +177,7 @@ export interface FileRoutesById {
   '/invest': typeof InvestRoute
   '/ledger': typeof LedgerRoute
   '/login': typeof LoginRoute
+  '/notifications': typeof NotificationsRoute
   '/referrals': typeof ReferralsRoute
   '/signup': typeof SignupRoute
   '/trading': typeof TradingRoute
@@ -191,6 +200,7 @@ export interface FileRouteTypes {
     | '/invest'
     | '/ledger'
     | '/login'
+    | '/notifications'
     | '/referrals'
     | '/signup'
     | '/trading'
@@ -211,6 +221,7 @@ export interface FileRouteTypes {
     | '/invest'
     | '/ledger'
     | '/login'
+    | '/notifications'
     | '/referrals'
     | '/signup'
     | '/trading'
@@ -231,6 +242,7 @@ export interface FileRouteTypes {
     | '/invest'
     | '/ledger'
     | '/login'
+    | '/notifications'
     | '/referrals'
     | '/signup'
     | '/trading'
@@ -252,6 +264,7 @@ export interface RootRouteChildren {
   InvestRoute: typeof InvestRoute
   LedgerRoute: typeof LedgerRoute
   LoginRoute: typeof LoginRoute
+  NotificationsRoute: typeof NotificationsRoute
   ReferralsRoute: typeof ReferralsRoute
   SignupRoute: typeof SignupRoute
   TradingRoute: typeof TradingRoute
@@ -320,6 +333,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/notifications': {
+      id: '/notifications'
+      path: '/notifications'
+      fullPath: '/notifications'
+      preLoaderRoute: typeof NotificationsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/referrals': {
@@ -404,6 +424,7 @@ const rootRouteChildren: RootRouteChildren = {
   InvestRoute: InvestRoute,
   LedgerRoute: LedgerRoute,
   LoginRoute: LoginRoute,
+  NotificationsRoute: NotificationsRoute,
   ReferralsRoute: ReferralsRoute,
   SignupRoute: SignupRoute,
   TradingRoute: TradingRoute,

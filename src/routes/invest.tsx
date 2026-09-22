@@ -13,6 +13,7 @@ import {
   getInvestmentManagement,
   releaseInvestmentProfit,
   requestInvestmentExit,
+  addFundsToInvestment,
 } from '#/server/investment.functions'
 
 export const Route = createFileRoute('/invest')({
@@ -154,80 +155,116 @@ function InvestPage() {
                   </Link>
                 </div>
                 {investment.status === 'ACTIVE' && (
-                  <div className="mt-5 flex flex-col gap-3 border-t border-black/6 pt-5 sm:flex-row">
-                    <button
-                      disabled={
-                        busy || Number(investment.releasableProfit) <= 0
-                      }
-                      onClick={() =>
+                  <div className="mt-5 flex flex-col gap-3 border-t border-black/6 pt-5">
+                    <form
+                      onSubmit={(event) => {
+                        event.preventDefault()
+                        const amount = String(
+                          new FormData(event.currentTarget).get('amount'),
+                        )
                         void run(
                           () =>
-                            releaseInvestmentProfit({
-                              data: { investmentId: investment.id },
+                            addFundsToInvestment({
+                              data: {
+                                investmentId: investment.id,
+                                amount,
+                                requestId: crypto.randomUUID(),
+                              },
                             }),
-                          'Profit released to your available balance.',
+                          'Funds added to your active investment.',
                         )
-                      }
-                      className="rounded-xl bg-[#d9ff71] px-5 py-3 text-sm font-bold disabled:opacity-40"
+                      }}
+                      className="flex flex-col gap-2 sm:flex-row"
                     >
-                      Release profit
-                    </button>
-                    {investment.exitRequest ? (
-                      <div className="flex flex-1 flex-wrap items-center justify-between gap-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
-                        <span>
-                          Exit {investment.exitRequest.status.toLowerCase()}
-                          {investment.exitRequest.decisionReason
-                            ? `: ${investment.exitRequest.decisionReason}`
-                            : ''}
-                        </span>
-                        <button
-                          disabled={busy}
-                          onClick={() =>
-                            void run(
-                              () =>
-                                cancelInvestmentExit({
-                                  data: {
-                                    requestId: investment.exitRequest!.id,
-                                  },
-                                }),
-                              'Exit request cancelled.',
-                            )
-                          }
-                          className="font-bold"
-                        >
-                          Cancel request
-                        </button>
-                      </div>
-                    ) : (
-                      <form
-                        onSubmit={(event) => {
-                          event.preventDefault()
-                          const note = String(
-                            new FormData(event.currentTarget).get('note'),
-                          )
+                      <input
+                        name="amount"
+                        inputMode="decimal"
+                        placeholder="Amount from available balance"
+                        required
+                        className="min-w-0 flex-1 rounded-xl border border-black/10 px-4 py-3 text-sm"
+                      />
+                      <button
+                        disabled={busy || Number(portfolio.available) <= 0}
+                        className="rounded-xl bg-[#123d2d] px-5 py-3 text-sm font-bold text-white disabled:opacity-40"
+                      >
+                        Add funds
+                      </button>
+                    </form>
+                    <div className="flex flex-col gap-3 sm:flex-row">
+                      <button
+                        disabled={
+                          busy || Number(investment.releasableProfit) <= 0
+                        }
+                        onClick={() =>
                           void run(
                             () =>
-                              requestInvestmentExit({
-                                data: { investmentId: investment.id, note },
+                              releaseInvestmentProfit({
+                                data: { investmentId: investment.id },
                               }),
-                            'Investment exit requested.',
+                            'Profit released to your available balance.',
                           )
-                        }}
-                        className="flex flex-1 flex-col gap-2 sm:flex-row"
+                        }
+                        className="rounded-xl bg-[#d9ff71] px-5 py-3 text-sm font-bold disabled:opacity-40"
                       >
-                        <input
-                          name="note"
-                          placeholder="Optional exit note"
-                          className="min-w-0 flex-1 rounded-xl border border-black/10 px-4 py-3 text-sm"
-                        />
-                        <button
-                          disabled={busy}
-                          className="rounded-xl border border-black/10 px-5 py-3 text-sm font-bold"
+                        Release profit
+                      </button>
+                      {investment.exitRequest ? (
+                        <div className="flex flex-1 flex-wrap items-center justify-between gap-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
+                          <span>
+                            Exit {investment.exitRequest.status.toLowerCase()}
+                            {investment.exitRequest.decisionReason
+                              ? `: ${investment.exitRequest.decisionReason}`
+                              : ''}
+                          </span>
+                          <button
+                            disabled={busy}
+                            onClick={() =>
+                              void run(
+                                () =>
+                                  cancelInvestmentExit({
+                                    data: {
+                                      requestId: investment.exitRequest!.id,
+                                    },
+                                  }),
+                                'Exit request cancelled.',
+                              )
+                            }
+                            className="font-bold"
+                          >
+                            Cancel request
+                          </button>
+                        </div>
+                      ) : (
+                        <form
+                          onSubmit={(event) => {
+                            event.preventDefault()
+                            const note = String(
+                              new FormData(event.currentTarget).get('note'),
+                            )
+                            void run(
+                              () =>
+                                requestInvestmentExit({
+                                  data: { investmentId: investment.id, note },
+                                }),
+                              'Investment exit requested.',
+                            )
+                          }}
+                          className="flex flex-1 flex-col gap-2 sm:flex-row"
                         >
-                          Stop investing
-                        </button>
-                      </form>
-                    )}
+                          <input
+                            name="note"
+                            placeholder="Optional exit note"
+                            className="min-w-0 flex-1 rounded-xl border border-black/10 px-4 py-3 text-sm"
+                          />
+                          <button
+                            disabled={busy}
+                            className="rounded-xl border border-black/10 px-5 py-3 text-sm font-bold"
+                          >
+                            Stop investing
+                          </button>
+                        </form>
+                      )}
+                    </div>
                   </div>
                 )}
               </article>

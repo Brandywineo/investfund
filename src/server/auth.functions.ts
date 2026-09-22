@@ -5,6 +5,7 @@ import { getDb } from '#/db'
 import { auditLogs, ledgerAccounts, sessions, users } from '#/db/schema'
 import { hashPassword, verifyPassword } from './password'
 import { attachReferrer, ensureReferralCode } from './referral.service'
+import { notifyUser } from './notification.service'
 import {
   createUserSession,
   destroyUserSession,
@@ -80,9 +81,21 @@ export const register = createServerFn({ method: 'POST' })
           referredBy: sponsor?.userId ?? null,
         },
       })
-      return created
+      return { ...created, sponsorUserId: sponsor?.userId ?? null }
     })
     await createUserSession(user.id)
+    if (user.sponsorUserId) {
+      await Promise.allSettled([
+        notifyUser({
+          userId: user.sponsorUserId,
+          category: 'REFERRAL',
+          title: 'A new direct referral joined',
+          body: 'Your new direct referral will begin generating commission after funding and starting an investment.',
+          href: '/referrals',
+          eventKey: `referral:${user.id}:joined`,
+        }),
+      ])
+    }
     return { success: true }
   })
 
