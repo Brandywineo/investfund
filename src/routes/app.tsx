@@ -31,6 +31,7 @@ function Home() {
   )
   const greeting =
     hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'
+  const rate = Number(portfolio.dailyRatePercent).toFixed(2)
   const activity = portfolio.latestActivatedAt
     ? [
         [
@@ -116,7 +117,7 @@ function Home() {
                 </p>
               </div>
               <span className="rounded-full bg-[#d9ff71]/15 px-3 py-1.5 text-xs font-bold text-[#d9ff71]">
-                {portfolio.dailyRatePercent}% daily rate
+                {rate}% daily rate
               </span>
             </div>
             <div className="mt-12 grid grid-cols-2 gap-4 border-t border-white/12 pt-6 md:grid-cols-4">
@@ -124,7 +125,7 @@ function Home() {
                 ['Active investment', `$${portfolio.activeInvestmentBalance}`],
                 ['Available', `$${portfolio.available}`],
                 ['Principal', `$${portfolio.activePrincipal}`],
-                ['Daily rate', `${portfolio.dailyRatePercent}%`],
+                ['Daily rate', `${rate}%`],
               ].map(([label, value]) => (
                 <div key={label}>
                   <p className="text-xs text-white/50">{label}</p>
@@ -148,7 +149,7 @@ function Home() {
                 </p>
               </div>
               <div className="grid size-16 place-items-center rounded-full bg-white text-sm font-bold shadow-sm">
-                {portfolio.dailyRatePercent}%
+                {rate}%
               </div>
             </div>
             <div className="mt-8 h-2 overflow-hidden rounded-full bg-black/8">

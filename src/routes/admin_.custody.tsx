@@ -17,6 +17,7 @@ import {
   updateCustodySettings,
 } from '#/server/custody.functions'
 import { currentUser } from '#/server/auth.functions'
+import { CopyButton, PasteButton } from '#/components/AddressActions'
 
 export const Route = createFileRoute('/admin_/custody')({
   beforeLoad: async () => {
@@ -37,6 +38,7 @@ function CustodyAdminPage() {
   const [busyAddressId, setBusyAddressId] = useState('')
   const [addressSort, setAddressSort] = useState('registered')
   const [refs, setRefs] = useState<Record<string, string>>({})
+  const [treasuryDestination, setTreasuryDestination] = useState('')
   async function run(action: () => Promise<unknown>, success: string) {
     setBusy(true)
     setError('')
@@ -335,14 +337,17 @@ function CustodyAdminPage() {
                 className={`${input} text-[#10251c]`}
               />
             </label>
-            <label className="mt-4 block text-sm font-semibold">
+            <label className="relative mt-4 block text-sm font-semibold">
               Destination BEP20 wallet
               <input
                 name="destination"
                 required
                 placeholder="0x..."
-                className={`${input} text-[#10251c]`}
+                value={treasuryDestination}
+                onChange={(event) => setTreasuryDestination(event.target.value)}
+                className={`${input} pr-24 font-mono text-sm text-[#10251c]`}
               />
+              <PasteButton onPaste={setTreasuryDestination} />
             </label>
             <label className="mt-4 block text-sm font-semibold">
               Reason
@@ -456,6 +461,7 @@ function CustodyAdminPage() {
               detail={item.destinationAddress}
             >
               <div className="grid min-w-52 gap-2">
+                <CopyButton value={item.destinationAddress} />
                 {item.status === 'REQUESTED' && (
                   <div className="flex gap-2">
                     <button
@@ -589,19 +595,23 @@ function CustodyAdminPage() {
                 key={item.id}
                 title={item.userEmail}
                 status={item.status}
-                detail={`${item.address} · index ${item.derivationIndex} · ${Number(item.tokenBalance).toFixed(8)} USDT · ${Number(item.nativeBalance).toFixed(6)} BNB`}
+                detail={`${item.address} · index ${item.derivationIndex} · ${Number(item.tokenBalance).toFixed(8)} USDT · ${Number(item.nativeBalance).toFixed(18)} BNB`}
               >
-                <button
-                  disabled={
-                    busyAddressId === item.id || Number(item.tokenBalance) <= 0
-                  }
-                  onClick={() => void runSweep(item.id)}
-                  className="action"
-                >
-                  {busyAddressId === item.id
-                    ? 'Sweeping…'
-                    : 'Sweep this wallet'}
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  <CopyButton value={item.address} />
+                  <button
+                    disabled={
+                      busyAddressId === item.id ||
+                      Number(item.tokenBalance) <= 0
+                    }
+                    onClick={() => void runSweep(item.id)}
+                    className="action"
+                  >
+                    {busyAddressId === item.id
+                      ? 'Sweeping…'
+                      : 'Sweep this wallet'}
+                  </button>
+                </div>
               </Row>
             ))}
           </div>

@@ -43,9 +43,10 @@ function ReferralsPage() {
             Copy referral link
           </button>
           <p className="mt-4 text-xs text-white/55">
-            Level 1: {data.rates[0]}% · Level 2: {data.rates[1]}% · Level 3:{' '}
-            {data.rates[2]}% of posted daily profit. The platform pays every
-            commission.
+            Level 1: {Number(data.rates[0]).toFixed(2)}% · Level 2:{' '}
+            {Number(data.rates[1]).toFixed(2)}% · Level 3:{' '}
+            {Number(data.rates[2]).toFixed(2)}% of posted daily profit. The
+            platform pays every commission.
           </p>
         </section>
         <section className="mt-5 grid gap-3 sm:grid-cols-4">
@@ -55,7 +56,9 @@ function ReferralsPage() {
               className="rounded-2xl bg-white p-5 ring-1 ring-black/5"
             >
               <p className="text-xs uppercase text-[#6e857a]">{key}</p>
-              <b className="mt-2 block text-xl">{value} USDT</b>
+              <b className="mt-2 block text-xl">
+                {Number(value).toFixed(2)} USDT
+              </b>
             </article>
           ))}
         </section>
@@ -64,11 +67,19 @@ function ReferralsPage() {
           <div className="mt-4 space-y-3">
             {data.directReferrals.length ? (
               data.directReferrals.map((item) => (
-                <div key={item.email} className="rounded-xl bg-[#f4f6f2] p-4">
-                  <b>{item.displayName}</b>
+                <div
+                  key={`${item.displayName}-${item.joinedAt}`}
+                  className="rounded-xl bg-[#f4f6f2] p-4"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <b>{item.displayName}</b>
+                    <span className="rounded-full bg-white px-3 py-1 text-xs font-bold uppercase text-[#557065]">
+                      {item.status}
+                    </span>
+                  </div>
                   <p className="text-xs text-[#6e857a]">
-                    {item.email} · joined{' '}
-                    {new Date(item.joinedAt).toISOString().slice(0, 10)}
+                    Joined {new Date(item.joinedAt).toISOString().slice(0, 10)}{' '}
+                    · earned you {Number(item.earnings).toFixed(2)} USDT
                   </p>
                 </div>
               ))
@@ -76,6 +87,32 @@ function ReferralsPage() {
               <p className="text-sm text-[#6e857a]">No direct referrals yet.</p>
             )}
           </div>
+        </section>
+        <section className="mt-5 grid gap-3 sm:grid-cols-2">
+          {data.networkStats.map((level) => (
+            <article
+              key={level.level}
+              className="rounded-[2rem] bg-white p-6 ring-1 ring-black/5"
+            >
+              <p className="text-xs font-bold uppercase tracking-[.14em] text-[#6e857a]">
+                Level {level.level} network
+              </p>
+              <div className="mt-4 grid grid-cols-3 gap-3">
+                <div>
+                  <b className="text-xl">{level.members}</b>
+                  <p className="text-xs text-[#6e857a]">Members</p>
+                </div>
+                <div>
+                  <b className="text-xl">{level.investing}</b>
+                  <p className="text-xs text-[#6e857a]">Investing</p>
+                </div>
+                <div>
+                  <b className="text-xl">{Number(level.earnings).toFixed(2)}</b>
+                  <p className="text-xs text-[#6e857a]">USDT earned</p>
+                </div>
+              </div>
+            </article>
+          ))}
         </section>
         <section className="mt-5 rounded-[2rem] bg-white p-6 ring-1 ring-black/5">
           <h2 className="text-xl font-semibold">Commission history</h2>
@@ -91,12 +128,12 @@ function ReferralsPage() {
                       Level {item.level} · {item.sourceName}
                     </b>
                     <p className="text-xs text-[#6e857a]">
-                      {item.ratePercent}% of{' '}
+                      {Number(item.ratePercent).toFixed(2)}% of{' '}
                       {Number(item.sourceProfit).toFixed(2)} USDT profit
                     </p>
                   </div>
                   <b className="text-green-700">
-                    +{Number(item.amount).toFixed(8)}
+                    +{Number(item.amount).toFixed(2)} USDT
                   </b>
                 </div>
               ))

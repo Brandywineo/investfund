@@ -149,7 +149,7 @@ export const requestWithdrawal = createServerFn({ method: 'POST' })
       destinationAddress: data.destinationAddress,
       network: settings.network,
     })
-    return { success: true, withdrawalId: withdrawal?.id }
+    return { success: true, withdrawalId: withdrawal.id }
   })
 
 export const cancelWithdrawal = createServerFn({ method: 'POST' })

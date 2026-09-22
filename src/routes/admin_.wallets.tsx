@@ -11,6 +11,7 @@ import {
   classifyPlatformTransaction,
   getPlatformWalletDashboard,
 } from '#/server/platform-wallet.functions'
+import { FullAddress } from '#/components/AddressActions'
 
 export const Route = createFileRoute('/admin_/wallets')({
   beforeLoad: async () => {
@@ -149,9 +150,10 @@ function PlatformWalletsPage() {
                       ? 'Hot / withdrawal wallet'
                       : 'Sweep fee wallet'}
                   </p>
-                  <p className="mt-2 break-all font-mono text-sm">
-                    {wallet.address}
-                  </p>
+                  <FullAddress
+                    value={wallet.address}
+                    dark={wallet.role === 'HOT_WITHDRAWAL'}
+                  />
                   <p className="mt-1 text-xs opacity-55">
                     {wallet.derivationPath}
                   </p>
@@ -170,7 +172,7 @@ function PlatformWalletsPage() {
                 <div>
                   <p className="text-xs opacity-55">BNB balance</p>
                   <b className="mt-1 block text-2xl">
-                    {Number(wallet.nativeBalance).toFixed(6)}
+                    {Number(wallet.nativeBalance).toFixed(18)}
                   </b>
                 </div>
               </div>
@@ -310,7 +312,7 @@ function PlatformWalletsPage() {
                       >
                         {transaction.direction === 'INCOMING' ? '+' : '-'}
                         {Number(transaction.amount).toFixed(
-                          transaction.asset === 'USDT' ? 8 : 6,
+                          transaction.asset === 'USDT' ? 8 : 18,
                         )}{' '}
                         {transaction.asset}
                       </b>

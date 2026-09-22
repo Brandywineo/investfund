@@ -12,6 +12,7 @@ import {
   requestWithdrawal,
 } from '#/server/custody.functions'
 import { currentUser } from '#/server/auth.functions'
+import { FullAddress, PasteButton } from '#/components/AddressActions'
 
 export const Route = createFileRoute('/wallet')({
   beforeLoad: async () => {
@@ -27,6 +28,7 @@ function WalletPage() {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [destinationAddress, setDestinationAddress] = useState('')
   async function run(action: () => Promise<unknown>, success: string) {
     setBusy(true)
     setError('')
@@ -88,9 +90,13 @@ function WalletPage() {
             <h2 className="mt-2 text-2xl font-semibold">
               Your deposit address
             </h2>
-            <p className="mt-5 break-all rounded-2xl bg-white/10 p-4 text-sm">
-              {data.depositAddress || 'Deposit address not configured'}
-            </p>
+            {data.depositAddress ? (
+              <FullAddress value={data.depositAddress} dark />
+            ) : (
+              <p className="mt-5 rounded-2xl bg-white/10 p-4 text-sm">
+                Deposit address not configured
+              </p>
+            )}
             <p className="mt-4 text-xs text-white/55">
               {data.automatedDeposits
                 ? 'Send only BEP20 USDT. Deposits are detected and credited automatically after one confirmation.'
@@ -116,9 +122,16 @@ function WalletPage() {
                 className={input}
               />
             </label>
-            <label className="mt-4 block text-sm font-semibold">
+            <label className="relative mt-4 block text-sm font-semibold">
               Destination address
-              <input name="address" required className={input} />
+              <input
+                name="address"
+                value={destinationAddress}
+                onChange={(event) => setDestinationAddress(event.target.value)}
+                required
+                className={`${input} pr-24 font-mono text-sm`}
+              />
+              <PasteButton onPaste={setDestinationAddress} />
             </label>
             <button
               disabled={busy}
@@ -174,7 +187,7 @@ function WalletPage() {
                         <b>{Number(item.amount).toFixed(2)} USDT</b>
                         <span className="text-xs font-bold">{item.status}</span>
                       </div>
-                      <p className="mt-2 truncate text-xs text-[#6e857a]">
+                      <p className="mt-2 break-all font-mono text-xs text-[#6e857a]">
                         {item.destinationAddress}
                       </p>
                       {item.status === 'REQUESTED' && (
