@@ -98,6 +98,58 @@ async function safelyBroadcast(signedTransaction: string, txHash: string) {
   }
 }
 
+async function rebroadcast(
+  kind: 'WITHDRAWAL' | 'TREASURY' | 'CONTROLLED',
+  recordId: string,
+) {
+  const db = getDb()
+  const record =
+    kind === 'WITHDRAWAL'
+      ? await db
+          .select({
+            status: withdrawals.status,
+            signedTransaction: withdrawals.signedTransaction,
+            txHash: withdrawals.txHash,
+            amount: withdrawals.netAmount,
+          })
+          .from(withdrawals)
+          .where(eq(withdrawals.id, recordId))
+          .limit(1)
+          .then((rows) => rows.at(0))
+      : kind === 'TREASURY'
+        ? await db
+            .select({
+              status: treasuryTransfers.status,
+              signedTransaction: treasuryTransfers.signedTransaction,
+              txHash: treasuryTransfers.txHash,
+              amount: treasuryTransfers.amount,
+            })
+            .from(treasuryTransfers)
+            .where(eq(treasuryTransfers.id, recordId))
+            .limit(1)
+            .then((rows) => rows.at(0))
+        : await db
+            .select({
+              status: controlledWalletTransfers.status,
+              signedTransaction: controlledWalletTransfers.signedTransaction,
+              txHash: controlledWalletTransfers.txHash,
+              amount: controlledWalletTransfers.amount,
+            })
+            .from(controlledWalletTransfers)
+            .where(eq(controlledWalletTransfers.id, recordId))
+            .limit(1)
+            .then((rows) => rows.at(0))
+  if (
+    !record ||
+    record.status !== 'BROADCAST' ||
+    !record.signedTransaction ||
+    !record.txHash
+  )
+    throw new Error('Broadcast signed transaction not found')
+  await safelyBroadcast(record.signedTransaction, record.txHash)
+  return { txHash: record.txHash, amount: record.amount }
+}
+
 async function controlledTransfer(transferId: string) {
   const db = getDb()
   let transfer = await db
@@ -498,6 +550,14 @@ const server = createServer(async (request, response) => {
       request.url === '/controlled-transfer'
     ) {
       result = await controlledTransfer(String(body.transferId))
+    } else if (request.method === 'POST' && request.url === '/rebroadcast') {
+      const kind = String(body.kind)
+      if (!['WITHDRAWAL', 'TREASURY', 'CONTROLLED'].includes(kind))
+        throw new Error('Invalid rebroadcast type')
+      result = await rebroadcast(
+        kind as 'WITHDRAWAL' | 'TREASURY' | 'CONTROLLED',
+        String(body.recordId),
+      )
     } else {
       response.writeHead(404, { 'content-type': 'application/json' })
       response.end(JSON.stringify({ error: 'Not found' }))

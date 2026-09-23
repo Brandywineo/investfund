@@ -66,3 +66,12 @@ export async function requestControlledWalletTransferBroadcast(
     await signerRequest('/controlled-transfer', { transferId }),
   )
 }
+
+export async function requestSignedTransactionRebroadcast(
+  kind: 'WITHDRAWAL' | 'TREASURY' | 'CONTROLLED',
+  recordId: string,
+) {
+  return transactionResponse.parse(
+    await signerRequest('/rebroadcast', { kind, recordId }),
+  )
+}

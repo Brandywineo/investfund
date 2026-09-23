@@ -224,6 +224,63 @@ function PlatformWalletsPage() {
           </p>
         )}
 
+        <section className="mt-5 rounded-[2rem] bg-[#123d2d] p-6 text-white">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[.16em] text-[#d9ff71]">
+                Chain worker
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold">
+                RPC and scanner health
+              </h2>
+              <p className="mt-2 text-sm text-white/60">
+                {data.summary.rpcProvider}
+              </p>
+            </div>
+            <span
+              className={`w-fit rounded-full px-3 py-1 text-xs font-bold ${
+                data.summary.rpcHealth === 'HEALTHY'
+                  ? 'bg-[#d9ff71] text-[#123d2d]'
+                  : data.summary.rpcHealth === 'CATCHING_UP'
+                    ? 'bg-amber-200 text-amber-900'
+                    : 'bg-red-200 text-red-900'
+              }`}
+            >
+              {data.summary.rpcHealth.replaceAll('_', ' ')}
+            </span>
+          </div>
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            {[
+              ['Block lag', data.summary.blockLag.toLocaleString()],
+              [
+                'Last scanned',
+                data.summary.lastScannedBlock?.toLocaleString() ?? 'Waiting',
+              ],
+              [
+                'Observed head',
+                data.summary.lastHeadBlock?.toLocaleString() ?? 'Waiting',
+              ],
+              ['Pending transfers', String(data.summary.pendingChainTransfers)],
+              [
+                'Last successful run',
+                data.summary.lastRunAt
+                  ? new Date(data.summary.lastRunAt).toLocaleString()
+                  : 'Never',
+              ],
+            ].map(([name, value]) => (
+              <div key={name} className="rounded-2xl bg-white/10 p-4">
+                <p className="text-xs text-white/55">{name}</p>
+                <b className="mt-1 block break-words text-sm">{value}</b>
+              </div>
+            ))}
+          </div>
+          {data.summary.lastError && (
+            <p className="mt-4 rounded-2xl bg-red-200 p-4 text-sm text-red-900">
+              Last error: {data.summary.lastError}
+            </p>
+          )}
+        </section>
+
         <section className="mt-8 rounded-[2rem] bg-white p-5 ring-1 ring-black/5 sm:p-7">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>

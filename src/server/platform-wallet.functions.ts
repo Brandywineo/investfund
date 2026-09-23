@@ -4,6 +4,8 @@ import { z } from 'zod'
 import { getDb } from '#/db'
 import {
   auditLogs,
+  chainWatcherState,
+  controlledWalletTransfers,
   custodySettings,
   deposits,
   ledgerAccounts,
@@ -14,6 +16,7 @@ import {
   withdrawals,
 } from '#/db/schema'
 import { formatUsdt, money } from '#/domain/money'
+import { chainWorkerHealth } from '#/domain/chain-worker'
 import { reserveRequirement } from '#/domain/treasury'
 import { postLedgerTransaction } from './ledger.service'
 import { recordTreasuryReturn } from './custody.service'
@@ -39,60 +42,77 @@ export const getPlatformWalletDashboard = createServerFn({
 }).handler(async () => {
   await requireAdmin()
   const db = getDb()
-  const [wallets, transactions, settings, withdrawable, pendingWithdrawals] =
-    await Promise.all([
-      db.select().from(platformWallets).orderBy(asc(platformWallets.role)),
-      db
-        .select({
-          id: platformWalletTransactions.id,
-          walletRole: platformWallets.role,
-          walletAddress: platformWallets.address,
-          txHash: platformWalletTransactions.txHash,
-          direction: platformWalletTransactions.direction,
-          asset: platformWalletTransactions.asset,
-          amount: platformWalletTransactions.amount,
-          fromAddress: platformWalletTransactions.fromAddress,
-          toAddress: platformWalletTransactions.toAddress,
-          status: platformWalletTransactions.status,
-          confirmations: platformWalletTransactions.confirmations,
-          classification: platformWalletTransactions.classification,
-          adminNote: platformWalletTransactions.adminNote,
-          observedAt: platformWalletTransactions.observedAt,
-        })
-        .from(platformWalletTransactions)
-        .innerJoin(
-          platformWallets,
-          eq(platformWallets.id, platformWalletTransactions.platformWalletId),
-        )
-        .orderBy(desc(platformWalletTransactions.observedAt))
-        .limit(250),
-      db
-        .select()
-        .from(custodySettings)
-        .where(eq(custodySettings.id, 1))
-        .limit(1)
-        .then((rows) => rows.at(0)),
-      db
-        .select({
-          value: sql<string>`coalesce(sum(${ledgerEntries.credit} - ${ledgerEntries.debit}), 0)`,
-        })
-        .from(ledgerEntries)
-        .innerJoin(
-          ledgerAccounts,
-          eq(ledgerAccounts.id, ledgerEntries.accountId),
-        )
-        .where(like(ledgerAccounts.code, 'USER:%:AVAILABLE'))
-        .then((rows) => rows.at(0)?.value ?? '0'),
-      db
-        .select({
-          value: sql<string>`coalesce(sum(${withdrawals.amount}), 0)`,
-        })
-        .from(withdrawals)
-        .where(
-          sql`${withdrawals.status} in ('REQUESTED', 'APPROVED', 'PROCESSING', 'BROADCAST')`,
-        )
-        .then((rows) => rows.at(0)?.value ?? '0'),
-    ])
+  const [
+    wallets,
+    transactions,
+    settings,
+    withdrawable,
+    pendingWithdrawals,
+    watcher,
+    pendingChainTransfers,
+  ] = await Promise.all([
+    db.select().from(platformWallets).orderBy(asc(platformWallets.role)),
+    db
+      .select({
+        id: platformWalletTransactions.id,
+        walletRole: platformWallets.role,
+        walletAddress: platformWallets.address,
+        txHash: platformWalletTransactions.txHash,
+        direction: platformWalletTransactions.direction,
+        asset: platformWalletTransactions.asset,
+        amount: platformWalletTransactions.amount,
+        fromAddress: platformWalletTransactions.fromAddress,
+        toAddress: platformWalletTransactions.toAddress,
+        status: platformWalletTransactions.status,
+        confirmations: platformWalletTransactions.confirmations,
+        classification: platformWalletTransactions.classification,
+        adminNote: platformWalletTransactions.adminNote,
+        observedAt: platformWalletTransactions.observedAt,
+      })
+      .from(platformWalletTransactions)
+      .innerJoin(
+        platformWallets,
+        eq(platformWallets.id, platformWalletTransactions.platformWalletId),
+      )
+      .orderBy(desc(platformWalletTransactions.observedAt))
+      .limit(250),
+    db
+      .select()
+      .from(custodySettings)
+      .where(eq(custodySettings.id, 1))
+      .limit(1)
+      .then((rows) => rows.at(0)),
+    db
+      .select({
+        value: sql<string>`coalesce(sum(${ledgerEntries.credit} - ${ledgerEntries.debit}), 0)`,
+      })
+      .from(ledgerEntries)
+      .innerJoin(ledgerAccounts, eq(ledgerAccounts.id, ledgerEntries.accountId))
+      .where(like(ledgerAccounts.code, 'USER:%:AVAILABLE'))
+      .then((rows) => rows.at(0)?.value ?? '0'),
+    db
+      .select({
+        value: sql<string>`coalesce(sum(${withdrawals.amount}), 0)`,
+      })
+      .from(withdrawals)
+      .where(
+        sql`${withdrawals.status} in ('REQUESTED', 'APPROVED', 'PROCESSING', 'BROADCAST')`,
+      )
+      .then((rows) => rows.at(0)?.value ?? '0'),
+    db
+      .select()
+      .from(chainWatcherState)
+      .where(eq(chainWatcherState.id, 1))
+      .limit(1)
+      .then((rows) => rows.at(0)),
+    db
+      .select({ value: sql<number>`count(*)::int` })
+      .from(controlledWalletTransfers)
+      .where(
+        sql`${controlledWalletTransfers.status} in ('APPROVED', 'PROCESSING', 'BROADCAST')`,
+      )
+      .then((rows) => rows.at(0)?.value ?? 0),
+  ])
   const hot = wallets.find((wallet) => wallet.role === 'HOT_WITHDRAWAL')
   const gas = wallets.find((wallet) => wallet.role === 'SWEEP_GAS')
   const requiredReserve = settings
@@ -114,6 +134,18 @@ export const getPlatformWalletDashboard = createServerFn({
     process.env.ESTIMATED_SWEEP_GAS_BNB ?? '0.0002',
   )
   const gasBalance = money(gas?.nativeBalance ?? 0)
+  const health = chainWorkerHealth(
+    watcher?.lastScannedBlock ?? 0,
+    watcher?.lastHeadBlock ?? watcher?.lastScannedBlock ?? 0,
+  )
+  const rpcHealth = watcher?.lastRunAt ? health.status : 'OFFLINE'
+  let rpcProvider = 'Not configured'
+  try {
+    if (process.env.BSC_RPC_URL)
+      rpcProvider = new URL(process.env.BSC_RPC_URL).hostname
+  } catch {
+    rpcProvider = 'Configured endpoint'
+  }
   return {
     wallets,
     transactions,
@@ -129,6 +161,14 @@ export const getPlatformWalletDashboard = createServerFn({
       estimatedSweeps: estimatedSweepCost.greaterThan(0)
         ? gasBalance.dividedToIntegerBy(estimatedSweepCost).toString()
         : '0',
+      rpcProvider,
+      rpcHealth,
+      blockLag: health.blockLag,
+      lastScannedBlock: watcher?.lastScannedBlock ?? null,
+      lastHeadBlock: watcher?.lastHeadBlock ?? null,
+      lastRunAt: watcher?.lastRunAt ?? null,
+      lastError: watcher?.lastError ?? null,
+      pendingChainTransfers,
     },
   }
 })

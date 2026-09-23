@@ -2,6 +2,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { desc } from 'drizzle-orm'
 import { z } from 'zod'
 import { getDb } from '#/db'
+import { hasSufficientHotGas } from '#/domain/chain-worker'
 import {
   controlledWalletTransfers,
   platformWallets,
@@ -54,6 +55,11 @@ export const getControlledWalletTransferDashboard = createServerFn({
     estimatedNativeFeeBnb: NATIVE_TRANSFER_FEE_ESTIMATE,
     recommendedSweepReserveBnb:
       process.env.RECOMMENDED_SWEEP_GAS_RESERVE_BNB ?? '0.001',
+    hotWalletHasGas: hasSufficientHotGas(
+      wallets.find((wallet) => wallet.role === 'HOT_WITHDRAWAL')
+        ?.nativeBalance ?? '0',
+      process.env.MIN_HOT_GAS_BNB ?? '0.00002',
+    ),
   }
 })
 

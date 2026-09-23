@@ -8,8 +8,10 @@ import {
   isAddress,
   zeroPadValue,
 } from 'ethers'
+import type { Filter, Log } from 'ethers'
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { getDb } from '#/db'
+import { hasSufficientHotGas, scannerBlockRanges } from '#/domain/chain-worker'
 import {
   chainWatcherState,
   controlledWalletTransfers,
@@ -33,6 +35,7 @@ import {
   getSignerPlatformWallets,
   requestTreasuryBroadcast,
   requestControlledWalletTransferBroadcast,
+  requestSignedTransactionRebroadcast,
   requestWalletSweep,
   requestWithdrawalBroadcast,
 } from './signer-api'
@@ -45,11 +48,73 @@ const TOKEN_ABI = [
 ]
 const tokenInterface = new Interface(TOKEN_ABI)
 
+const wait = (milliseconds: number) =>
+  new Promise((resolve) => setTimeout(resolve, milliseconds))
+
 function chunks<T>(values: Array<T>, size: number) {
   const output: Array<Array<T>> = []
   for (let index = 0; index < values.length; index += size)
     output.push(values.slice(index, index + size))
   return output
+}
+
+async function retry<T>(operation: () => Promise<T>, attempts = 3) {
+  let lastCause: unknown
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await operation()
+    } catch (cause) {
+      lastCause = cause
+      if (attempt < attempts) await wait(250 * 2 ** (attempt - 1))
+    }
+  }
+  throw lastCause
+}
+
+async function mapConcurrent<T, TResult>(
+  values: Array<T>,
+  concurrency: number,
+  operation: (value: T) => Promise<TResult>,
+) {
+  const output = new Array<TResult>(values.length)
+  let cursor = 0
+  async function worker() {
+    while (cursor < values.length) {
+      const index = cursor
+      cursor += 1
+      output[index] = await operation(values[index])
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, values.length) }, worker),
+  )
+  return output
+}
+
+async function chunkedLogs(input: {
+  provider: JsonRpcProvider
+  filter: Filter
+  fromBlock: number
+  toBlock: number
+  chunkBlocks: number
+  concurrency: number
+}) {
+  if (input.fromBlock > input.toBlock) return [] as Array<Log>
+  const ranges = scannerBlockRanges(
+    input.fromBlock,
+    input.toBlock,
+    input.chunkBlocks,
+  )
+  const groups = await mapConcurrent(ranges, input.concurrency, (range) =>
+    retry(() =>
+      input.provider.getLogs({
+        ...input.filter,
+        fromBlock: range.fromBlock,
+        toBlock: range.toBlock,
+      }),
+    ),
+  )
+  return groups.flat()
 }
 
 type RpcBlock = {
@@ -66,44 +131,49 @@ async function nativeTransfers(
   rpcUrl: string,
   fromBlock: number,
   toBlock: number,
+  concurrency: number,
 ) {
-  const blocks: Array<RpcBlock> = []
   const blockNumbers = Array.from(
     { length: toBlock - fromBlock + 1 },
     (_, index) => fromBlock + index,
   )
-  for (const batch of chunks(blockNumbers, 10)) {
-    const response = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(
-        batch.map((blockNumber, index) => ({
-          jsonrpc: '2.0',
-          id: index + 1,
-          method: 'eth_getBlockByNumber',
-          params: [`0x${blockNumber.toString(16)}`, true],
-        })),
-      ),
-      signal: AbortSignal.timeout(20_000),
-    })
-    if (!response.ok)
-      throw new Error(
-        `Native transaction scan returned HTTP ${response.status}`,
-      )
-    const payload = (await response.json()) as Array<{
-      result?: RpcBlock
-      error?: { message?: string }
-    }>
-    if (!Array.isArray(payload))
-      throw new Error('RPC provider does not support batched native scans')
-    const failure = payload.find((item) => item.error)
-    if (failure?.error)
-      throw new Error(failure.error.message || 'Native transaction scan failed')
-    blocks.push(
-      ...payload.flatMap((item) => (item.result ? [item.result] : [])),
-    )
-  }
-  return blocks
+  const groups = await mapConcurrent(
+    chunks(blockNumbers, 10),
+    concurrency,
+    (batch) =>
+      retry(async () => {
+        const response = await fetch(rpcUrl, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(
+            batch.map((blockNumber, index) => ({
+              jsonrpc: '2.0',
+              id: index + 1,
+              method: 'eth_getBlockByNumber',
+              params: [`0x${blockNumber.toString(16)}`, true],
+            })),
+          ),
+          signal: AbortSignal.timeout(20_000),
+        })
+        if (!response.ok)
+          throw new Error(
+            `Native transaction scan returned HTTP ${response.status}`,
+          )
+        const payload = (await response.json()) as Array<{
+          result?: RpcBlock
+          error?: { message?: string }
+        }>
+        if (!Array.isArray(payload))
+          throw new Error('RPC provider does not support batched native scans')
+        const failure = payload.find((item) => item.error)
+        if (failure?.error)
+          throw new Error(
+            failure.error.message || 'Native transaction scan failed',
+          )
+        return payload.flatMap((item) => (item.result ? [item.result] : []))
+      }),
+  )
+  return groups.flat()
 }
 
 async function finalizedBlock(provider: JsonRpcProvider, head: number) {
@@ -152,8 +222,18 @@ export async function runChainWorker() {
   const configuredStart = Number(process.env.BSC_START_BLOCK || 0)
   const configuredScanBlocks = Number(process.env.BSC_SCAN_BLOCKS || 50)
   const scanBlocks = Number.isSafeInteger(configuredScanBlocks)
-    ? Math.min(500, Math.max(1, configuredScanBlocks))
+    ? Math.min(1_000, Math.max(1, configuredScanBlocks))
     : 50
+  const configuredLogChunkBlocks = Number(
+    process.env.BSC_LOG_CHUNK_BLOCKS || 10,
+  )
+  const logChunkBlocks = Number.isSafeInteger(configuredLogChunkBlocks)
+    ? Math.min(100, Math.max(1, configuredLogChunkBlocks))
+    : 10
+  const configuredRpcConcurrency = Number(process.env.BSC_RPC_CONCURRENCY || 4)
+  const rpcConcurrency = Number.isSafeInteger(configuredRpcConcurrency)
+    ? Math.min(10, Math.max(1, configuredRpcConcurrency))
+    : 4
   const configuredAddressBatch = Number(process.env.BSC_ADDRESS_BATCH_SIZE || 1)
   const addressBatchSize = Number.isSafeInteger(configuredAddressBatch)
     ? Math.min(50, Math.max(1, configuredAddressBatch))
@@ -203,7 +283,7 @@ export async function runChainWorker() {
         },
       })
   }
-  const managedWalletRows = await db.select().from(platformWallets)
+  let managedWalletRows = await db.select().from(platformWallets)
   await Promise.all(
     managedWalletRows.map(async (wallet) => {
       const [tokenBalance, nativeBalance] = await Promise.all([
@@ -221,6 +301,79 @@ export async function runChainWorker() {
         .where(eq(platformWallets.id, wallet.id))
     }),
   )
+  managedWalletRows = await db.select().from(platformWallets)
+
+  // Receipt settlement is intentionally independent from historical scanning.
+  // A provider backlog must never prevent the platform from recognizing a
+  // confirmed or reverted transaction that it already broadcast.
+  const droppedBefore = Date.now() - 2 * 60_000
+  const earlyBroadcastWithdrawals = await db
+    .select({
+      id: withdrawals.id,
+      txHash: withdrawals.txHash,
+      broadcastAt: withdrawals.broadcastAt,
+    })
+    .from(withdrawals)
+    .where(eq(withdrawals.status, 'BROADCAST'))
+  for (const withdrawal of earlyBroadcastWithdrawals) {
+    if (!withdrawal.txHash) continue
+    const receipt = await provider.getTransactionReceipt(withdrawal.txHash)
+    if (receipt)
+      await settleBroadcastWithdrawal(withdrawal.id, receipt.status === 1)
+    else if (
+      withdrawal.broadcastAt &&
+      withdrawal.broadcastAt.getTime() < droppedBefore &&
+      !(await provider.getTransaction(withdrawal.txHash))
+    )
+      await requestSignedTransactionRebroadcast('WITHDRAWAL', withdrawal.id)
+  }
+  const earlyBroadcastTreasury = await db
+    .select({
+      id: treasuryTransfers.id,
+      txHash: treasuryTransfers.txHash,
+      broadcastAt: treasuryTransfers.broadcastAt,
+    })
+    .from(treasuryTransfers)
+    .where(eq(treasuryTransfers.status, 'BROADCAST'))
+  for (const transfer of earlyBroadcastTreasury) {
+    if (!transfer.txHash) continue
+    const receipt = await provider.getTransactionReceipt(transfer.txHash)
+    if (receipt?.status === 1)
+      await advanceTreasuryStatus(
+        transfer.id,
+        'BROADCAST',
+        'CONFIRMED',
+        undefined,
+      )
+    else if (receipt?.status === 0)
+      await failBroadcastTreasuryTransfer(transfer.id)
+    else if (
+      transfer.broadcastAt &&
+      transfer.broadcastAt.getTime() < droppedBefore &&
+      !(await provider.getTransaction(transfer.txHash))
+    )
+      await requestSignedTransactionRebroadcast('TREASURY', transfer.id)
+  }
+  const earlyBroadcastControlled = await db
+    .select({
+      id: controlledWalletTransfers.id,
+      txHash: controlledWalletTransfers.txHash,
+      broadcastAt: controlledWalletTransfers.broadcastAt,
+    })
+    .from(controlledWalletTransfers)
+    .where(eq(controlledWalletTransfers.status, 'BROADCAST'))
+  for (const transfer of earlyBroadcastControlled) {
+    if (!transfer.txHash) continue
+    const receipt = await provider.getTransactionReceipt(transfer.txHash)
+    if (receipt)
+      await settleControlledWalletTransfer(transfer.id, receipt.status === 1)
+    else if (
+      transfer.broadcastAt &&
+      transfer.broadcastAt.getTime() < droppedBefore &&
+      !(await provider.getTransaction(transfer.txHash))
+    )
+      await requestSignedTransactionRebroadcast('CONTROLLED', transfer.id)
+  }
 
   const [
     knownSweeps,
@@ -289,14 +442,19 @@ export async function runChainWorker() {
     for (const wallet of managedWalletRows) {
       for (const direction of ['INCOMING', 'OUTGOING'] as const) {
         const walletTopic = zeroPadValue(getAddress(wallet.address), 32)
-        const logs = await provider.getLogs({
-          address: settings.tokenContractAddress,
+        const logs = await chunkedLogs({
+          provider,
+          filter: {
+            address: settings.tokenContractAddress,
+            topics:
+              direction === 'INCOMING'
+                ? [TRANSFER_TOPIC, null, walletTopic]
+                : [TRANSFER_TOPIC, walletTopic],
+          },
           fromBlock,
           toBlock,
-          topics:
-            direction === 'INCOMING'
-              ? [TRANSFER_TOPIC, null, walletTopic]
-              : [TRANSFER_TOPIC, walletTopic],
+          chunkBlocks: logChunkBlocks,
+          concurrency: rpcConcurrency,
         })
         for (const log of logs) {
           const parsed = tokenInterface.parseLog(log)
@@ -360,8 +518,13 @@ export async function runChainWorker() {
       }
     }
 
-    try {
-      const nativeBlocks = await nativeTransfers(rpcUrl, fromBlock, toBlock)
+    {
+      const nativeBlocks = await nativeTransfers(
+        rpcUrl,
+        fromBlock,
+        toBlock,
+        rpcConcurrency,
+      )
       for (const block of nativeBlocks) {
         const blockNumber = block.number ? Number(BigInt(block.number)) : null
         for (const transaction of block.transactions ?? []) {
@@ -433,8 +596,6 @@ export async function runChainWorker() {
           }
         }
       }
-    } catch (cause) {
-      console.error('Native BNB transaction scan skipped', cause)
     }
   }
 
@@ -507,11 +668,16 @@ export async function runChainWorker() {
       )
       const recipientFilter =
         recipientTopics.length === 1 ? recipientTopics[0] : recipientTopics
-      const logs = await provider.getLogs({
-        address: settings.tokenContractAddress,
+      const logs = await chunkedLogs({
+        provider,
+        filter: {
+          address: settings.tokenContractAddress,
+          topics: [TRANSFER_TOPIC, null, recipientFilter],
+        },
         fromBlock,
         toBlock,
-        topics: [TRANSFER_TOPIC, null, recipientFilter],
+        chunkBlocks: logChunkBlocks,
+        concurrency: rpcConcurrency,
       })
       for (const log of logs) {
         const parsed = tokenInterface.parseLog(log)
@@ -684,7 +850,21 @@ export async function runChainWorker() {
     .select({ id: withdrawals.id })
     .from(withdrawals)
     .where(eq(withdrawals.status, 'APPROVED'))
+  const minimumHotGasForTokenTransfer = process.env.MIN_HOT_GAS_BNB ?? '0.00002'
+  const hotWalletBeforeTransfers = managedWalletRows.find(
+    (wallet) => wallet.role === 'HOT_WITHDRAWAL',
+  )
+  const hotWalletHasGasBeforeTransfers = hasSufficientHotGas(
+    hotWalletBeforeTransfers?.nativeBalance ?? '0',
+    minimumHotGasForTokenTransfer,
+  )
   for (const withdrawal of approvedWithdrawals) {
+    if (!hotWalletHasGasBeforeTransfers) {
+      console.warn(
+        `Withdrawal ${withdrawal.id} waiting for confirmed hot-wallet BNB`,
+      )
+      continue
+    }
     try {
       await requestWithdrawalBroadcast(withdrawal.id)
       withdrawalsBroadcast += 1
@@ -704,6 +884,33 @@ export async function runChainWorker() {
       await settleBroadcastWithdrawal(withdrawal.id, receipt.status === 1)
   }
 
+  // Platform BNB movements are processed before token transfers. Treasury and
+  // user transfers are gated below until the hot wallet has confirmed gas.
+  const interruptedControlledTransfers = await db
+    .select({ id: controlledWalletTransfers.id })
+    .from(controlledWalletTransfers)
+    .where(eq(controlledWalletTransfers.status, 'PROCESSING'))
+  for (const transfer of interruptedControlledTransfers) {
+    try {
+      await requestControlledWalletTransferBroadcast(transfer.id)
+    } catch (cause) {
+      console.error(`Controlled transfer retry ${transfer.id} failed`, cause)
+    }
+  }
+  const approvedControlledTransfers = await db
+    .select({ id: controlledWalletTransfers.id })
+    .from(controlledWalletTransfers)
+    .where(eq(controlledWalletTransfers.status, 'APPROVED'))
+  let controlledTransfersBroadcast = 0
+  for (const transfer of approvedControlledTransfers) {
+    try {
+      await requestControlledWalletTransferBroadcast(transfer.id)
+      controlledTransfersBroadcast += 1
+    } catch (cause) {
+      console.error(`Controlled transfer ${transfer.id} failed`, cause)
+    }
+  }
+
   const interruptedTreasury = await db
     .select({ id: treasuryTransfers.id })
     .from(treasuryTransfers)
@@ -720,7 +927,35 @@ export async function runChainWorker() {
     .from(treasuryTransfers)
     .where(eq(treasuryTransfers.status, 'APPROVED'))
   let treasuryBroadcast = 0
+  const hotWallet = managedWalletRows.find(
+    (wallet) => wallet.role === 'HOT_WITHDRAWAL',
+  )
+  const pendingHotFunding = await db
+    .select({ id: controlledWalletTransfers.id })
+    .from(controlledWalletTransfers)
+    .where(
+      and(
+        eq(controlledWalletTransfers.destinationRole, 'HOT_WITHDRAWAL'),
+        inArray(controlledWalletTransfers.status, [
+          'APPROVED',
+          'PROCESSING',
+          'BROADCAST',
+        ]),
+      ),
+    )
+    .limit(1)
+    .then((rows) => rows.at(0))
+  const hotWalletHasGas = hasSufficientHotGas(
+    hotWallet?.nativeBalance ?? '0',
+    minimumHotGasForTokenTransfer,
+  )
   for (const transfer of approvedTreasury) {
+    if (!hotWalletHasGas || pendingHotFunding) {
+      console.warn(
+        `Treasury transfer ${transfer.id} waiting for confirmed hot-wallet BNB`,
+      )
+      continue
+    }
     try {
       await requestTreasuryBroadcast(transfer.id)
       treasuryBroadcast += 1
@@ -746,30 +981,6 @@ export async function runChainWorker() {
       await failBroadcastTreasuryTransfer(transfer.id)
   }
 
-  const interruptedControlledTransfers = await db
-    .select({ id: controlledWalletTransfers.id })
-    .from(controlledWalletTransfers)
-    .where(eq(controlledWalletTransfers.status, 'PROCESSING'))
-  for (const transfer of interruptedControlledTransfers) {
-    try {
-      await requestControlledWalletTransferBroadcast(transfer.id)
-    } catch (cause) {
-      console.error(`Controlled transfer retry ${transfer.id} failed`, cause)
-    }
-  }
-  const approvedControlledTransfers = await db
-    .select({ id: controlledWalletTransfers.id })
-    .from(controlledWalletTransfers)
-    .where(eq(controlledWalletTransfers.status, 'APPROVED'))
-  let controlledTransfersBroadcast = 0
-  for (const transfer of approvedControlledTransfers) {
-    try {
-      await requestControlledWalletTransferBroadcast(transfer.id)
-      controlledTransfersBroadcast += 1
-    } catch (cause) {
-      console.error(`Controlled transfer ${transfer.id} failed`, cause)
-    }
-  }
   const broadcastControlledTransfers = await db
     .select({
       id: controlledWalletTransfers.id,

@@ -394,7 +394,11 @@ function WalletTransfersPage() {
               amount={`${Number(transfer.amount).toFixed(8)} USDT`}
               destination={transfer.destination}
               reason={transfer.reason}
-              status={transfer.status}
+              status={
+                transfer.status === 'APPROVED' && !data.hotWalletHasGas
+                  ? 'WAITING FOR BNB'
+                  : transfer.status
+              }
               txHash={transfer.txHash}
             >
               {transfer.status === 'DRAFTED' && (
