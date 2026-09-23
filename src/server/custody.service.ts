@@ -8,6 +8,7 @@ import {
   ledgerEntries,
   referralRelationships,
   treasuryTransfers,
+  users,
   withdrawals,
 } from '#/db/schema'
 import { money } from '#/domain/money'
@@ -139,6 +140,134 @@ export async function confirmDeposit(depositId: string, actorUserId?: string) {
       : []),
   ])
   return confirmed
+}
+
+export async function recordAdminConfirmedDeposit(input: {
+  userId: string
+  amount: string
+  txHash: string
+  receivedInto: 'HOT_WALLET' | 'ADMIN_CUSTODY'
+  note: string
+  receivedAt: Date
+  actorUserId: string
+}) {
+  const deposit = await getDb().transaction(async (tx) => {
+    // Serializes trusted admin entries with the same TXID. This is only a
+    // local duplicate guard; the platform intentionally does not query BSC.
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(lower(${input.txHash})))`,
+    )
+    const duplicate = await tx
+      .select({ id: deposits.id })
+      .from(deposits)
+      .where(sql`lower(${deposits.txHash}) = lower(${input.txHash})`)
+      .limit(1)
+      .then((rows) => rows.at(0))
+    if (duplicate) throw new Error('This TXID is already attached to a deposit')
+
+    const targetUser = await tx
+      .select({ id: users.id, status: users.status })
+      .from(users)
+      .where(eq(users.id, input.userId))
+      .limit(1)
+      .then((rows) => rows.at(0))
+    if (!targetUser) throw new Error('User not found')
+    if (targetUser.status === 'SUSPENDED')
+      throw new Error('A suspended user cannot be credited')
+
+    const created = await tx
+      .insert(deposits)
+      .values({
+        userId: input.userId,
+        amount: money(input.amount).toString(),
+        network: 'BEP20',
+        txHash: input.txHash,
+        source: 'ADMIN_RECORDED',
+        receivedInto: input.receivedInto,
+        adminNote: input.note,
+        recordedBy: input.actorUserId,
+        status: 'CONFIRMED',
+        confirmations: 1,
+        submittedAt: input.receivedAt,
+        confirmedAt: new Date(),
+        confirmedBy: input.actorUserId,
+      })
+      .returning()
+      .then((rows) => rows.at(0))
+    if (!created) throw new Error('Deposit was not created')
+
+    const assetCode =
+      input.receivedInto === 'ADMIN_CUSTODY'
+        ? 'PLATFORM:ADMIN_CUSTODY'
+        : 'PLATFORM:HOT_WALLET'
+    const asset = await account(tx, assetCode)
+    const available = await account(tx, `USER:${input.userId}:AVAILABLE`)
+    const ledger = await postLedgerTransaction(tx, {
+      eventType: 'DEPOSIT_CONFIRMED',
+      referenceType: 'deposit',
+      referenceId: created.id,
+      idempotencyKey: `deposit:${created.id}:admin-confirmed`,
+      description: `Confirmed ${created.network} deposit`,
+      effectiveAt: input.receivedAt,
+      createdBy: input.actorUserId,
+      lines: [
+        { accountId: asset, side: 'DEBIT', amount: money(input.amount) },
+        { accountId: available, side: 'CREDIT', amount: money(input.amount) },
+      ],
+    })
+    await tx
+      .update(deposits)
+      .set({ ledgerTransactionId: ledger.id, updatedAt: new Date() })
+      .where(eq(deposits.id, created.id))
+    await audit(
+      tx,
+      input.actorUserId,
+      'ADMIN_DEPOSIT_RECORDED',
+      'deposit',
+      created.id,
+      null,
+      {
+        userId: input.userId,
+        amount: input.amount,
+        txHash: input.txHash,
+        receivedInto: input.receivedInto,
+        note: input.note,
+        receivedAt: input.receivedAt.toISOString(),
+        ledgerTransactionId: ledger.id,
+      },
+    )
+    return created
+  })
+
+  const sponsor = await getDb()
+    .select({ userId: referralRelationships.referrerUserId })
+    .from(referralRelationships)
+    .where(eq(referralRelationships.referredUserId, deposit.userId))
+    .limit(1)
+    .then((rows) => rows.at(0))
+  await Promise.allSettled([
+    notifyUser({
+      userId: deposit.userId,
+      category: 'SYSTEM',
+      title: 'Deposit confirmed',
+      body: `${money(deposit.amount).toFixed(2)} USDT is now available.`,
+      href: '/wallet',
+      eventKey: `deposit:${deposit.id}:confirmed`,
+    }),
+    ...(sponsor
+      ? [
+          notifyUser({
+            userId: sponsor.userId,
+            category: 'REFERRAL' as const,
+            title: 'Direct referral funded their account',
+            body: 'Your direct referral has made a confirmed deposit. Commission begins after they start investing and earn daily profit.',
+            href: '/referrals',
+            eventKey: `referral:${deposit.userId}:first-deposit`,
+          }),
+        ]
+      : []),
+  ])
+  return deposit
 }
 
 export async function approveWithdrawal(

@@ -11,6 +11,7 @@ import {
   createTreasuryTransfer,
   getCustodyDashboard,
   registerTreasuryReturn,
+  recordAdminDeposit,
   reviewDeposit,
   reviewWithdrawal,
   sweepWalletAddress,
@@ -153,6 +154,26 @@ function CustodyAdminPage() {
           },
         }),
       'MT5 return recorded in platform liquidity.',
+    )
+  }
+  function manualDeposit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const form = event.currentTarget
+    const f = new FormData(form)
+    return run(
+      () =>
+        recordAdminDeposit({
+          data: {
+            userId: String(f.get('userId')),
+            amount: String(f.get('amount')),
+            txHash: String(f.get('txHash')),
+            receivedInto: String(f.get('receivedInto')) as
+              'HOT_WALLET' | 'ADMIN_CUSTODY',
+            note: String(f.get('note')),
+            receivedAt: new Date(String(f.get('receivedAt'))).toISOString(),
+          },
+        }),
+      'Confirmed deposit recorded and user balance credited.',
     )
   }
   const input =
@@ -403,13 +424,111 @@ function CustodyAdminPage() {
             Record confirmed return
           </button>
         </form>
+        <form
+          onSubmit={manualDeposit}
+          className="mt-5 rounded-[2rem] bg-[#fff8dd] p-6 ring-1 ring-amber-900/10"
+        >
+          <p className="text-xs font-bold uppercase tracking-[.14em] text-amber-800">
+            Administrator-trusted record
+          </p>
+          <h2 className="mt-2 text-xl font-semibold">
+            Record confirmed user deposit
+          </h2>
+          <p className="mt-2 text-sm text-[#6e857a]">
+            This immediately credits the user. The TXID is stored as entered and
+            is not checked against the blockchain.
+          </p>
+          <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <label className="text-sm font-semibold">
+              User
+              <select name="userId" required className={input} defaultValue="">
+                <option value="" disabled>
+                  Select a user
+                </option>
+                {data.users.map((user) => (
+                  <option
+                    key={user.id}
+                    value={user.id}
+                    disabled={user.status === 'SUSPENDED'}
+                  >
+                    {user.displayName} · {user.email}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm font-semibold">
+              Amount (USDT)
+              <input
+                name="amount"
+                inputMode="decimal"
+                required
+                className={input}
+              />
+            </label>
+            <label className="text-sm font-semibold">
+              Received into
+              <select name="receivedInto" required className={input}>
+                <option value="HOT_WALLET">Platform hot wallet</option>
+                <option value="ADMIN_CUSTODY">Admin-controlled custody</option>
+              </select>
+            </label>
+            <label className="text-sm font-semibold md:col-span-2">
+              Transaction ID
+              <input
+                name="txHash"
+                minLength={8}
+                required
+                className={`${input} font-mono`}
+              />
+            </label>
+            <label className="text-sm font-semibold">
+              Received at
+              <input
+                name="receivedAt"
+                type="datetime-local"
+                required
+                defaultValue={new Date(
+                  Date.now() - new Date().getTimezoneOffset() * 60_000,
+                )
+                  .toISOString()
+                  .slice(0, 16)}
+                className={input}
+              />
+            </label>
+            <label className="text-sm font-semibold md:col-span-2 lg:col-span-3">
+              Internal note / reason
+              <textarea
+                name="note"
+                required
+                minLength={3}
+                placeholder="How the payment was received and what the administrator verified"
+                className={`${input} min-h-24`}
+              />
+            </label>
+          </div>
+          <label className="mt-4 flex items-start gap-3 text-sm font-semibold">
+            <input name="confirmed" type="checkbox" required className="mt-1" />
+            I have verified this record and understand that submitting it
+            immediately increases the user’s available balance.
+          </label>
+          <button
+            disabled={busy}
+            className="mt-5 rounded-xl bg-[#123d2d] px-6 py-3 font-bold text-white"
+          >
+            Record and credit deposit
+          </button>
+        </form>
         <Queue title="Deposits">
           {data.deposits.map((item) => (
             <Row
               key={item.id}
               title={`${item.userEmail} · ${Number(item.amount).toFixed(2)} USDT`}
               status={item.status}
-              detail={item.txHash || 'No transaction hash'}
+              detail={`${item.txHash || 'No transaction hash'}${
+                item.source === 'ADMIN_RECORDED'
+                  ? ` · admin recorded · ${item.receivedInto.replaceAll('_', ' ').toLowerCase()} · ${item.adminNote || 'No internal note'}`
+                  : ''
+              }`}
             >
               {item.status === 'PENDING' && (
                 <div className="flex gap-2">

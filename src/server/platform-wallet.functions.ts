@@ -5,6 +5,7 @@ import { getDb } from '#/db'
 import {
   auditLogs,
   custodySettings,
+  deposits,
   ledgerAccounts,
   ledgerEntries,
   platformWallets,
@@ -157,6 +158,18 @@ export const classifyPlatformTransaction = createServerFn({ method: 'POST' })
       throw new Error('An incoming USDT transaction is required')
     if (transaction.classification)
       throw new Error('This transaction is already classified')
+    const recordedDeposit = await db
+      .select({ id: deposits.id })
+      .from(deposits)
+      .where(
+        sql`lower(${deposits.txHash}) = lower(${transaction.txHash}) and ${deposits.status} = 'CONFIRMED'`,
+      )
+      .limit(1)
+      .then((rows) => rows.at(0))
+    if (recordedDeposit)
+      throw new Error(
+        'This incoming transaction already backs a confirmed user deposit and must not be classified again',
+      )
 
     let relatedTransferId: string | undefined
     if (data.classification === 'MT5_RETURN') {

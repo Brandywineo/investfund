@@ -636,6 +636,10 @@ export const deposits = pgTable(
     amount: numeric('amount', { precision: 20, scale: 8 }).notNull(),
     network: text('network').default('BEP20').notNull(),
     txHash: text('tx_hash'),
+    source: text('source').default('AUTOMATIC').notNull(),
+    receivedInto: text('received_into').default('HOT_WALLET').notNull(),
+    adminNote: text('admin_note'),
+    recordedBy: uuid('recorded_by').references(() => users.id),
     walletAddressId: uuid('wallet_address_id').references(
       () => walletAddresses.id,
       { onDelete: 'restrict' },
@@ -669,6 +673,14 @@ export const deposits = pgTable(
     ),
     index('deposits_user_status_idx').on(table.userId, table.status),
     check('deposit_amount_positive', sql`${table.amount} > 0`),
+    check(
+      'deposit_source_valid',
+      sql`${table.source} in ('AUTOMATIC', 'USER_SUBMITTED', 'ADMIN_RECORDED')`,
+    ),
+    check(
+      'deposit_received_into_valid',
+      sql`${table.receivedInto} in ('HOT_WALLET', 'ADMIN_CUSTODY')`,
+    ),
   ],
 )
 

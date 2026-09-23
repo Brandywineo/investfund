@@ -30,6 +30,7 @@ import {
   confirmDeposit,
   creditBrokerTransfer,
   recordTreasuryReturn,
+  recordAdminConfirmedDeposit,
   reserveWithdrawalRequest,
   releaseApprovedWithdrawal,
 } from './custody.service'
@@ -131,6 +132,7 @@ export const submitDeposit = createServerFn({ method: 'POST' })
         amount: data.amount,
         network: settings.network,
         txHash: data.txHash,
+        source: 'USER_SUBMITTED',
       })
       .returning({ id: deposits.id })
       .then((rows) => rows.at(0))
@@ -212,6 +214,7 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
       addressRows,
       sweepRows,
       watcher,
+      userRows,
     ] = await Promise.all([
       db
         .select()
@@ -261,6 +264,11 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
           txHash: deposits.txHash,
           status: deposits.status,
           createdAt: deposits.createdAt,
+          source: deposits.source,
+          receivedInto: deposits.receivedInto,
+          adminNote: deposits.adminNote,
+          recordedBy: deposits.recordedBy,
+          confirmedAt: deposits.confirmedAt,
         })
         .from(deposits)
         .innerJoin(users, eq(users.id, deposits.userId))
@@ -317,6 +325,16 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
         .where(eq(chainWatcherState.id, 1))
         .limit(1)
         .then((rows) => rows.at(0)),
+      db
+        .select({
+          id: users.id,
+          displayName: users.displayName,
+          email: users.email,
+          status: users.status,
+        })
+        .from(users)
+        .where(sql`${users.role} <> 'ADMIN'`)
+        .orderBy(asc(users.createdAt)),
     ])
     if (!settings) throw new Error('Custody settings are not initialized')
     const balances = Object.fromEntries(
@@ -335,6 +353,7 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
       settings.reservePercent,
     )
     const totalAssets = money(hotWallet)
+      .add(balances['PLATFORM:ADMIN_CUSTODY'] ?? 0)
       .add(balances['PLATFORM:TREASURY_IN_TRANSIT'] ?? 0)
       .add(balances['PLATFORM:BROKER_TREASURY'] ?? 0)
     const totalLiabilities = money(totalUserLiabilities).add(reserved)
@@ -342,6 +361,7 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
       settings,
       summary: {
         hotWallet: formatUsdt(hotWallet),
+        adminCustody: formatUsdt(balances['PLATFORM:ADMIN_CUSTODY'] ?? 0),
         withdrawalReserved: formatUsdt(reserved),
         treasuryInTransit: formatUsdt(
           balances['PLATFORM:TREASURY_IN_TRANSIT'] ?? 0,
@@ -374,9 +394,34 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
       addresses: addressRows,
       sweeps: sweepRows,
       watcher,
+      users: userRows,
     }
   },
 )
+
+export const recordAdminDeposit = createServerFn({ method: 'POST' })
+  .validator(
+    z.object({
+      userId: z.string().uuid(),
+      amount: amountSchema,
+      txHash: referenceSchema,
+      receivedInto: z.enum(['HOT_WALLET', 'ADMIN_CUSTODY']),
+      note: z.string().trim().min(3).max(500),
+      receivedAt: z.string().datetime(),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const admin = await requireAdmin()
+    const receivedAt = new Date(data.receivedAt)
+    if (receivedAt.getTime() > Date.now() + 60_000)
+      throw new Error('Received time cannot be in the future')
+    const deposit = await recordAdminConfirmedDeposit({
+      ...data,
+      receivedAt,
+      actorUserId: admin.id,
+    })
+    return { success: true, depositId: deposit.id }
+  })
 
 export const updateCustodySettings = createServerFn({ method: 'POST' })
   .validator(
