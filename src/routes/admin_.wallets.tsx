@@ -122,6 +122,7 @@ function PlatformWalletsPage() {
             </p>
           </div>
           <nav className="flex flex-wrap gap-4 text-sm font-bold">
+            <Link to="/admin/wallet-transfers">Transfers</Link>
             <Link to="/admin">Controls</Link>
             <Link to="/admin/custody">Custody</Link>
             <Link to="/admin/referrals">Referrals</Link>

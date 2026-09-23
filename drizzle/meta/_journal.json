@@ -99,6 +99,13 @@
       "when": 1790146020279,
       "tag": "0013_natural_shen",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790151003302,
+      "tag": "0014_rich_wendigo",
+      "breakpoints": true
     }
   ]
 }

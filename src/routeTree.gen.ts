@@ -27,6 +27,7 @@ import { Route as AdminExitsRouteImport } from './routes/admin_.exits'
 import { Route as AdminReferralsRouteImport } from './routes/admin_.referrals'
 import { Route as AdminTradingRouteImport } from './routes/admin_.trading'
 import { Route as AdminUsersRouteImport } from './routes/admin_.users'
+import { Route as AdminWalletTransfersRouteImport } from './routes/admin_.wallet-transfers'
 import { Route as AdminWalletsRouteImport } from './routes/admin_.wallets'
 
 const IndexRoute = IndexRouteImport.update({
@@ -119,6 +120,11 @@ const AdminUsersRoute = AdminUsersRouteImport.update({
   path: '/admin/users',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminWalletTransfersRoute = AdminWalletTransfersRouteImport.update({
+  id: '/admin_/wallet-transfers',
+  path: '/admin/wallet-transfers',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminWalletsRoute = AdminWalletsRouteImport.update({
   id: '/admin_/wallets',
   path: '/admin/wallets',
@@ -144,6 +150,7 @@ export interface FileRoutesByFullPath {
   '/admin/referrals': typeof AdminReferralsRoute
   '/admin/trading': typeof AdminTradingRoute
   '/admin/users': typeof AdminUsersRoute
+  '/admin/wallet-transfers': typeof AdminWalletTransfersRoute
   '/admin/wallets': typeof AdminWalletsRoute
 }
 export interface FileRoutesByTo {
@@ -165,6 +172,7 @@ export interface FileRoutesByTo {
   '/admin/referrals': typeof AdminReferralsRoute
   '/admin/trading': typeof AdminTradingRoute
   '/admin/users': typeof AdminUsersRoute
+  '/admin/wallet-transfers': typeof AdminWalletTransfersRoute
   '/admin/wallets': typeof AdminWalletsRoute
 }
 export interface FileRoutesById {
@@ -187,6 +195,7 @@ export interface FileRoutesById {
   '/admin_/referrals': typeof AdminReferralsRoute
   '/admin_/trading': typeof AdminTradingRoute
   '/admin_/users': typeof AdminUsersRoute
+  '/admin_/wallet-transfers': typeof AdminWalletTransfersRoute
   '/admin_/wallets': typeof AdminWalletsRoute
 }
 export interface FileRouteTypes {
@@ -210,6 +219,7 @@ export interface FileRouteTypes {
     | '/admin/referrals'
     | '/admin/trading'
     | '/admin/users'
+    | '/admin/wallet-transfers'
     | '/admin/wallets'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -231,6 +241,7 @@ export interface FileRouteTypes {
     | '/admin/referrals'
     | '/admin/trading'
     | '/admin/users'
+    | '/admin/wallet-transfers'
     | '/admin/wallets'
   id:
     | '__root__'
@@ -252,6 +263,7 @@ export interface FileRouteTypes {
     | '/admin_/referrals'
     | '/admin_/trading'
     | '/admin_/users'
+    | '/admin_/wallet-transfers'
     | '/admin_/wallets'
   fileRoutesById: FileRoutesById
 }
@@ -274,6 +286,7 @@ export interface RootRouteChildren {
   AdminReferralsRoute: typeof AdminReferralsRoute
   AdminTradingRoute: typeof AdminTradingRoute
   AdminUsersRoute: typeof AdminUsersRoute
+  AdminWalletTransfersRoute: typeof AdminWalletTransfersRoute
   AdminWalletsRoute: typeof AdminWalletsRoute
 }
 
@@ -405,6 +418,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminUsersRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin_/wallet-transfers': {
+      id: '/admin_/wallet-transfers'
+      path: '/admin/wallet-transfers'
+      fullPath: '/admin/wallet-transfers'
+      preLoaderRoute: typeof AdminWalletTransfersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin_/wallets': {
       id: '/admin_/wallets'
       path: '/admin/wallets'
@@ -434,6 +454,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminReferralsRoute: AdminReferralsRoute,
   AdminTradingRoute: AdminTradingRoute,
   AdminUsersRoute: AdminUsersRoute,
+  AdminWalletTransfersRoute: AdminWalletTransfersRoute,
   AdminWalletsRoute: AdminWalletsRoute,
 }
 export const routeTree = rootRouteImport

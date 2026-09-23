@@ -85,6 +85,18 @@ export const platformTransactionStatus = pgEnum('platform_transaction_status', [
   'CONFIRMED',
   'FAILED',
 ])
+export const controlledWalletTransferStatus = pgEnum(
+  'controlled_wallet_transfer_status',
+  [
+    'DRAFTED',
+    'APPROVED',
+    'PROCESSING',
+    'BROADCAST',
+    'CONFIRMED',
+    'FAILED',
+    'CANCELLED',
+  ],
+)
 export const tradingPositionStatus = pgEnum('trading_position_status', [
   'OPEN',
   'CLOSED',
@@ -793,6 +805,69 @@ export const platformWalletTransactions = pgTable(
     check(
       'platform_wallet_transaction_amount_positive',
       sql`${table.amount} > 0`,
+    ),
+  ],
+)
+
+export const controlledWalletTransfers = pgTable(
+  'controlled_wallet_transfers',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    sourceRole: platformWalletRole('source_role').notNull(),
+    destinationType: text('destination_type').notNull(),
+    destinationRole: platformWalletRole('destination_role'),
+    destinationAddress: text('destination_address').notNull(),
+    asset: text('asset').notNull(),
+    amount: numeric('amount', { precision: 30, scale: 18 }).notNull(),
+    reason: text('reason').notNull(),
+    status: controlledWalletTransferStatus('status')
+      .default('DRAFTED')
+      .notNull(),
+    createdBy: uuid('created_by')
+      .references(() => users.id)
+      .notNull(),
+    approvedBy: uuid('approved_by').references(() => users.id),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    signedTransaction: text('signed_transaction'),
+    chainNonce: integer('chain_nonce'),
+    txHash: text('tx_hash'),
+    broadcastAt: timestamp('broadcast_at', { withTimezone: true }),
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+    failureReason: text('failure_reason'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('controlled_wallet_transfers_tx_hash_unique').on(table.txHash),
+    index('controlled_wallet_transfers_status_idx').on(table.status),
+    check(
+      'controlled_wallet_transfer_amount_positive',
+      sql`${table.amount} > 0`,
+    ),
+    check(
+      'controlled_wallet_transfer_destination_type',
+      sql`${table.destinationType} in ('INTERNAL', 'EXTERNAL')`,
+    ),
+    check(
+      'controlled_wallet_transfer_asset',
+      sql`${table.asset} in ('BNB', 'USDT')`,
+    ),
+    check(
+      'controlled_wallet_transfer_route',
+      sql`(
+        ${table.sourceRole} = 'SWEEP_GAS'
+        and ${table.asset} = 'BNB'
+        and ${table.destinationType} = 'INTERNAL'
+        and ${table.destinationRole} = 'HOT_WITHDRAWAL'
+      ) or (
+        ${table.sourceRole} = 'HOT_WITHDRAWAL'
+        and ${table.destinationType} = 'INTERNAL'
+        and ${table.destinationRole} = 'SWEEP_GAS'
+        and ${table.asset} = 'BNB'
+      ) or (
+        ${table.sourceRole} = 'HOT_WITHDRAWAL'
+        and ${table.destinationType} = 'EXTERNAL'
+        and ${table.destinationRole} is null
+      )`,
     ),
   ],
 )

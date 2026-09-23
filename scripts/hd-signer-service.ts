@@ -13,6 +13,7 @@ import { and, eq } from 'drizzle-orm'
 import { getDb } from '../src/db'
 import {
   custodySettings,
+  controlledWalletTransfers,
   walletAddresses,
   walletSweeps,
   treasuryTransfers,
@@ -24,6 +25,8 @@ import {
   broadcastTreasuryTransfer,
   broadcastWithdrawal,
 } from '../src/server/custody.service'
+import { markControlledWalletTransferBroadcast } from '../src/server/controlled-wallet-transfer.service'
+import { validateWalletTransferRoute } from '../src/domain/wallet-transfer'
 
 const ERC20_ABI = [
   'function balanceOf(address) view returns (uint256)',
@@ -92,6 +95,107 @@ async function safelyBroadcast(signedTransaction: string, txHash: string) {
   } catch (cause) {
     const known = await provider.getTransaction(txHash).catch(() => null)
     if (!known) throw cause
+  }
+}
+
+async function controlledTransfer(transferId: string) {
+  const db = getDb()
+  let transfer = await db
+    .select()
+    .from(controlledWalletTransfers)
+    .where(eq(controlledWalletTransfers.id, transferId))
+    .limit(1)
+    .then((rows) => rows.at(0))
+  if (!transfer || !['APPROVED', 'PROCESSING'].includes(transfer.status))
+    throw new Error('Approved or processing controlled transfer not found')
+  if (transfer.asset !== 'BNB')
+    throw new Error('Controlled signer transfer only supports BNB')
+  if (!isAddress(transfer.destinationAddress))
+    throw new Error('Controlled transfer destination is invalid')
+  validateWalletTransferRoute({
+    sourceRole: transfer.sourceRole,
+    destinationType: transfer.destinationType as 'INTERNAL' | 'EXTERNAL',
+    destinationRole: transfer.destinationRole,
+    asset: 'BNB',
+  })
+  const source =
+    transfer.sourceRole === 'HOT_WITHDRAWAL' ? hotWallet : gasWallet
+  const expectedInternalDestination =
+    transfer.sourceRole === 'HOT_WITHDRAWAL'
+      ? gasWallet.address
+      : hotWallet.address
+  if (
+    transfer.destinationType === 'INTERNAL' &&
+    transfer.destinationAddress.toLowerCase() !==
+      expectedInternalDestination.toLowerCase()
+  )
+    throw new Error('Internal destination does not match the controlled wallet')
+
+  const originalStatus = transfer.status
+  try {
+    if (transfer.status === 'APPROVED') {
+      const value = parseUnits(transfer.amount, 18)
+      const [network, fee, nonce, balance] = await Promise.all([
+        provider.getNetwork(),
+        provider.getFeeData(),
+        provider.getTransactionCount(source.address, 'pending'),
+        provider.getBalance(source.address),
+      ])
+      const gasPrice = fee.gasPrice ?? fee.maxFeePerGas
+      if (!gasPrice) throw new Error('Could not determine network gas price')
+      const gasLimit = await provider.estimateGas({
+        from: source.address,
+        to: transfer.destinationAddress,
+        value,
+      })
+      const bufferedGasLimit = (gasLimit * 125n) / 100n
+      if (value + bufferedGasLimit * gasPrice > balance)
+        throw new Error('BNB balance is insufficient after network gas')
+      const signedTransaction = await source.signTransaction({
+        to: transfer.destinationAddress,
+        value,
+        chainId: network.chainId,
+        nonce,
+        gasLimit: bufferedGasLimit,
+        gasPrice,
+      })
+      const txHash = keccak256(signedTransaction)
+      transfer = await db
+        .update(controlledWalletTransfers)
+        .set({
+          status: 'PROCESSING',
+          signedTransaction,
+          chainNonce: nonce,
+          txHash,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(controlledWalletTransfers.id, transfer.id),
+            eq(controlledWalletTransfers.status, 'APPROVED'),
+          ),
+        )
+        .returning()
+        .then((rows) => rows.at(0))
+      if (!transfer) throw new Error('Transfer is already being processed')
+    }
+    if (!transfer.signedTransaction || !transfer.txHash)
+      throw new Error('Processing transfer has no signed transaction')
+    await safelyBroadcast(transfer.signedTransaction, transfer.txHash)
+    await markControlledWalletTransferBroadcast(transfer.id, transfer.txHash)
+    return { txHash: transfer.txHash, amount: transfer.amount }
+  } catch (cause) {
+    if (originalStatus === 'APPROVED')
+      await db
+        .update(controlledWalletTransfers)
+        .set({
+          status: 'FAILED',
+          failureReason:
+            cause instanceof Error ? cause.message : 'BNB transfer failed',
+          updatedAt: new Date(),
+        })
+        .where(eq(controlledWalletTransfers.id, transferId))
+    throw cause
   }
 }
 
@@ -389,6 +493,11 @@ const server = createServer(async (request, response) => {
       result = await withdraw(String(body.withdrawalId))
     } else if (request.method === 'POST' && request.url === '/treasury') {
       result = await treasury(String(body.transferId))
+    } else if (
+      request.method === 'POST' &&
+      request.url === '/controlled-transfer'
+    ) {
+      result = await controlledTransfer(String(body.transferId))
     } else {
       response.writeHead(404, { 'content-type': 'application/json' })
       response.end(JSON.stringify({ error: 'Not found' }))

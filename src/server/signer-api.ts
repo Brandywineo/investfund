@@ -58,3 +58,11 @@ export async function requestTreasuryBroadcast(transferId: string) {
     await signerRequest('/treasury', { transferId }),
   )
 }
+
+export async function requestControlledWalletTransferBroadcast(
+  transferId: string,
+) {
+  return transactionResponse.parse(
+    await signerRequest('/controlled-transfer', { transferId }),
+  )
+}

@@ -203,6 +203,7 @@ function CustodyAdminPage() {
           <nav className="flex gap-5 text-sm font-bold">
             <Link to="/admin">Controls</Link>
             <Link to="/admin/wallets">Platform wallets</Link>
+            <Link to="/admin/wallet-transfers">Transfers</Link>
             <Link to="/admin/users">Users</Link>
             <Link to="/admin/referrals">Referrals</Link>
             <Link to="/app">Dashboard →</Link>

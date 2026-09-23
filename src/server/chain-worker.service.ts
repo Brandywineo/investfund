@@ -12,6 +12,7 @@ import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { getDb } from '#/db'
 import {
   chainWatcherState,
+  controlledWalletTransfers,
   custodySettings,
   deposits,
   platformWallets,
@@ -27,9 +28,11 @@ import {
   failBroadcastTreasuryTransfer,
   settleBroadcastWithdrawal,
 } from './custody.service'
+import { settleControlledWalletTransfer } from './controlled-wallet-transfer.service'
 import {
   getSignerPlatformWallets,
   requestTreasuryBroadcast,
+  requestControlledWalletTransferBroadcast,
   requestWalletSweep,
   requestWithdrawalBroadcast,
 } from './signer-api'
@@ -219,36 +222,47 @@ export async function runChainWorker() {
     }),
   )
 
-  const [knownSweeps, knownWithdrawals, knownTreasury, recordedGasSweeps] =
-    await Promise.all([
-      db
-        .select({
-          id: walletSweeps.id,
-          sweepTxHash: walletSweeps.sweepTxHash,
-          gasTxHash: walletSweeps.gasTxHash,
-        })
-        .from(walletSweeps),
-      db
-        .select({ id: withdrawals.id, txHash: withdrawals.txHash })
-        .from(withdrawals),
-      db
-        .select({
-          id: treasuryTransfers.id,
-          txHash: treasuryTransfers.txHash,
-          purpose: treasuryTransfers.purpose,
-          direction: treasuryTransfers.direction,
-        })
-        .from(treasuryTransfers),
-      db
-        .select({ relatedId: platformWalletTransactions.relatedId })
-        .from(platformWalletTransactions)
-        .where(
-          and(
-            eq(platformWalletTransactions.asset, 'BNB'),
-            eq(platformWalletTransactions.classification, 'SWEEP_GAS'),
-          ),
+  const [
+    knownSweeps,
+    knownWithdrawals,
+    knownTreasury,
+    knownControlledTransfers,
+    recordedGasSweeps,
+  ] = await Promise.all([
+    db
+      .select({
+        id: walletSweeps.id,
+        sweepTxHash: walletSweeps.sweepTxHash,
+        gasTxHash: walletSweeps.gasTxHash,
+      })
+      .from(walletSweeps),
+    db
+      .select({ id: withdrawals.id, txHash: withdrawals.txHash })
+      .from(withdrawals),
+    db
+      .select({
+        id: treasuryTransfers.id,
+        txHash: treasuryTransfers.txHash,
+        purpose: treasuryTransfers.purpose,
+        direction: treasuryTransfers.direction,
+      })
+      .from(treasuryTransfers),
+    db
+      .select({
+        id: controlledWalletTransfers.id,
+        txHash: controlledWalletTransfers.txHash,
+      })
+      .from(controlledWalletTransfers),
+    db
+      .select({ relatedId: platformWalletTransactions.relatedId })
+      .from(platformWalletTransactions)
+      .where(
+        and(
+          eq(platformWalletTransactions.asset, 'BNB'),
+          eq(platformWalletTransactions.classification, 'SWEEP_GAS'),
         ),
-    ])
+      ),
+  ])
   const sweepByHash = new Map(
     knownSweeps
       .filter((row) => row.sweepTxHash)
@@ -261,6 +275,11 @@ export async function runChainWorker() {
   )
   const treasuryByHash = new Map(
     knownTreasury
+      .filter((row) => row.txHash)
+      .map((row) => [row.txHash!.toLowerCase(), row]),
+  )
+  const controlledTransferByHash = new Map(
+    knownControlledTransfers
       .filter((row) => row.txHash)
       .map((row) => [row.txHash!.toLowerCase(), row]),
   )
@@ -368,12 +387,17 @@ export async function runChainWorker() {
                 sweep.gasTxHash?.toLowerCase() ===
                 transaction.hash.toLowerCase(),
             )
+            const knownControlledTransfer = controlledTransferByHash.get(
+              transaction.hash.toLowerCase(),
+            )
             const classification = knownGasSweep
               ? 'SWEEP_GAS'
-              : match.direction === 'INCOMING' &&
-                  match.wallet.role === 'SWEEP_GAS'
-                ? 'GAS_TOP_UP'
-                : null
+              : knownControlledTransfer
+                ? 'CONTROLLED_WALLET_TRANSFER'
+                : match.direction === 'INCOMING' &&
+                    match.wallet.role === 'SWEEP_GAS'
+                  ? 'GAS_TOP_UP'
+                  : null
             const inserted = await db
               .insert(platformWalletTransactions)
               .values({
@@ -394,8 +418,13 @@ export async function runChainWorker() {
                 confirmations:
                   blockNumber === null ? 0 : head - blockNumber + 1,
                 classification,
-                relatedType: knownGasSweep ? 'wallet_sweep' : null,
-                relatedId: knownGasSweep?.id ?? null,
+                relatedType: knownGasSweep
+                  ? 'wallet_sweep'
+                  : knownControlledTransfer
+                    ? 'controlled_wallet_transfer'
+                    : null,
+                relatedId:
+                  knownGasSweep?.id ?? knownControlledTransfer?.id ?? null,
               })
               .onConflictDoNothing()
               .returning({ id: platformWalletTransactions.id })
@@ -717,6 +746,44 @@ export async function runChainWorker() {
       await failBroadcastTreasuryTransfer(transfer.id)
   }
 
+  const interruptedControlledTransfers = await db
+    .select({ id: controlledWalletTransfers.id })
+    .from(controlledWalletTransfers)
+    .where(eq(controlledWalletTransfers.status, 'PROCESSING'))
+  for (const transfer of interruptedControlledTransfers) {
+    try {
+      await requestControlledWalletTransferBroadcast(transfer.id)
+    } catch (cause) {
+      console.error(`Controlled transfer retry ${transfer.id} failed`, cause)
+    }
+  }
+  const approvedControlledTransfers = await db
+    .select({ id: controlledWalletTransfers.id })
+    .from(controlledWalletTransfers)
+    .where(eq(controlledWalletTransfers.status, 'APPROVED'))
+  let controlledTransfersBroadcast = 0
+  for (const transfer of approvedControlledTransfers) {
+    try {
+      await requestControlledWalletTransferBroadcast(transfer.id)
+      controlledTransfersBroadcast += 1
+    } catch (cause) {
+      console.error(`Controlled transfer ${transfer.id} failed`, cause)
+    }
+  }
+  const broadcastControlledTransfers = await db
+    .select({
+      id: controlledWalletTransfers.id,
+      txHash: controlledWalletTransfers.txHash,
+    })
+    .from(controlledWalletTransfers)
+    .where(eq(controlledWalletTransfers.status, 'BROADCAST'))
+  for (const transfer of broadcastControlledTransfers) {
+    if (!transfer.txHash) continue
+    const receipt = await provider.getTransactionReceipt(transfer.txHash)
+    if (receipt)
+      await settleControlledWalletTransfer(transfer.id, receipt.status === 1)
+  }
+
   await db
     .insert(chainWatcherState)
     .values({
@@ -746,6 +813,7 @@ export async function runChainWorker() {
     swept,
     withdrawalsBroadcast,
     treasuryBroadcast,
+    controlledTransfersBroadcast,
     platformTransactions,
   }
 }
