@@ -4,6 +4,7 @@ import {
   Contract,
   HDNodeWallet,
   JsonRpcProvider,
+  Transaction,
   formatUnits,
   isAddress,
   keccak256,
@@ -17,6 +18,7 @@ import {
   walletAddresses,
   walletSweeps,
   treasuryTransfers,
+  treasuryTransactionAttempts,
   withdrawals,
 } from '../src/db/schema'
 import type { EncryptedMnemonic } from '../src/server/hd-wallet-crypto'
@@ -507,6 +509,127 @@ async function treasury(transferId: string) {
   }
 }
 
+async function replaceTreasuryTransaction(transferId: string) {
+  const db = getDb()
+  const transfer = await db
+    .select()
+    .from(treasuryTransfers)
+    .where(eq(treasuryTransfers.id, transferId))
+    .limit(1)
+    .then((rows) => rows.at(0))
+  if (
+    !transfer ||
+    transfer.status !== 'BROADCAST' ||
+    !transfer.signedTransaction ||
+    !transfer.txHash ||
+    transfer.chainNonce === null
+  )
+    throw new Error('Broadcast treasury transfer is not replaceable')
+  const previousTxHash = transfer.txHash
+  const previousSignedTransaction = transfer.signedTransaction
+  const chainNonce = transfer.chainNonce
+
+  const mined = await provider.getTransactionReceipt(previousTxHash)
+  if (mined)
+    throw new Error('Transaction is already mined; wait for reconciliation')
+
+  const settings = await db
+    .select()
+    .from(custodySettings)
+    .where(eq(custodySettings.id, 1))
+    .limit(1)
+    .then((rows) => rows.at(0))
+  if (!settings?.tokenContractAddress)
+    throw new Error('USDT contract is not configured')
+
+  const previous = Transaction.from(previousSignedTransaction)
+  const networkFee = await provider.getFeeData()
+  const previousGasPrice = previous.gasPrice ?? previous.maxFeePerGas
+  const currentGasPrice = networkFee.gasPrice ?? networkFee.maxFeePerGas
+  if (!previousGasPrice || !currentGasPrice)
+    throw new Error('Could not determine replacement gas price')
+  const gasPrice =
+    previousGasPrice > currentGasPrice
+      ? (previousGasPrice * 125n) / 100n
+      : (currentGasPrice * 125n) / 100n
+
+  const token = new Contract(
+    settings.tokenContractAddress,
+    ERC20_ABI,
+    hotWallet,
+  )
+  const decimals = Number(await token.decimals())
+  const populated = await token.transfer.populateTransaction(
+    transfer.destination,
+    parseUnits(transfer.amount, decimals),
+  )
+  const network = await provider.getNetwork()
+  const gasLimit =
+    previous.gasLimit ||
+    (await provider.estimateGas({
+      ...populated,
+      from: hotWallet.address,
+    }))
+  const signedTransaction = await hotWallet.signTransaction({
+    ...populated,
+    chainId: network.chainId,
+    nonce: chainNonce,
+    gasLimit,
+    gasPrice,
+  })
+  const txHash = keccak256(signedTransaction)
+  const now = new Date()
+
+  await db.transaction(async (tx) => {
+    await tx
+      .insert(treasuryTransactionAttempts)
+      .values({
+        treasuryTransferId: transfer.id,
+        txHash: previousTxHash,
+        signedTransaction: previousSignedTransaction,
+        chainNonce,
+        gasPriceWei: previousGasPrice.toString(),
+        status: 'REPLACED',
+        broadcastAt: transfer.broadcastAt ?? transfer.updatedAt,
+        replacedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: treasuryTransactionAttempts.txHash,
+        set: { status: 'REPLACED', replacedAt: now, updatedAt: now },
+      })
+    await tx.insert(treasuryTransactionAttempts).values({
+      treasuryTransferId: transfer.id,
+      txHash,
+      signedTransaction,
+      chainNonce,
+      gasPriceWei: gasPrice.toString(),
+      status: 'BROADCAST',
+      broadcastAt: now,
+    })
+    const updated = await tx
+      .update(treasuryTransfers)
+      .set({
+        txHash,
+        signedTransaction,
+        broadcastAt: now,
+        failureReason: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(treasuryTransfers.id, transfer.id),
+          eq(treasuryTransfers.txHash, previousTxHash),
+          eq(treasuryTransfers.status, 'BROADCAST'),
+        ),
+      )
+      .returning({ id: treasuryTransfers.id })
+    if (!updated.length)
+      throw new Error('Treasury transfer changed; reload and retry')
+  })
+  await safelyBroadcast(signedTransaction, txHash)
+  return { txHash, amount: transfer.amount }
+}
+
 const server = createServer(async (request, response) => {
   try {
     if (request.headers.authorization !== `Bearer ${apiToken}`) {
@@ -545,6 +668,11 @@ const server = createServer(async (request, response) => {
       result = await withdraw(String(body.withdrawalId))
     } else if (request.method === 'POST' && request.url === '/treasury') {
       result = await treasury(String(body.transferId))
+    } else if (
+      request.method === 'POST' &&
+      request.url === '/treasury-replace'
+    ) {
+      result = await replaceTreasuryTransaction(String(body.transferId))
     } else if (
       request.method === 'POST' &&
       request.url === '/controlled-transfer'

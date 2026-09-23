@@ -1021,6 +1021,42 @@ export const treasuryTransfers = pgTable(
   ],
 )
 
+export const treasuryTransactionAttempts = pgTable(
+  'treasury_transaction_attempts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    treasuryTransferId: uuid('treasury_transfer_id')
+      .references(() => treasuryTransfers.id, { onDelete: 'restrict' })
+      .notNull(),
+    txHash: text('tx_hash').notNull(),
+    signedTransaction: text('signed_transaction').notNull(),
+    chainNonce: integer('chain_nonce').notNull(),
+    gasPriceWei: numeric('gas_price_wei', {
+      precision: 30,
+      scale: 0,
+    }).notNull(),
+    status: text('status').default('BROADCAST').notNull(),
+    broadcastAt: timestamp('broadcast_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+    replacedAt: timestamp('replaced_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('treasury_transaction_attempts_tx_hash_unique').on(
+      table.txHash,
+    ),
+    index('treasury_transaction_attempts_transfer_idx').on(
+      table.treasuryTransferId,
+    ),
+    check(
+      'treasury_transaction_attempt_status',
+      sql`${table.status} in ('BROADCAST', 'REPLACED', 'CONFIRMED', 'FAILED')`,
+    ),
+  ],
+)
+
 export const withdrawals = pgTable(
   'withdrawals',
   {

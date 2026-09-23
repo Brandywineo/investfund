@@ -21,6 +21,7 @@ import {
   walletAddresses,
   walletSweeps,
   treasuryTransfers,
+  treasuryTransactionAttempts,
   withdrawals,
 } from '#/db/schema'
 import {
@@ -170,7 +171,9 @@ async function nativeTransfers(
             error?: { code?: number; message?: string }
           }>
           if (!Array.isArray(payload))
-            throw new Error('RPC provider does not support batched native scans')
+            throw new Error(
+              'RPC provider does not support batched native scans',
+            )
           const failure = payload.find((item) => item.error)
           if (failure?.error) {
             const cause = new Error(
@@ -288,6 +291,41 @@ export async function runChainWorker() {
     rpcPool.run(({ provider }) => provider.getTransactionReceipt(txHash))
   const transactionByHash = (txHash: string) =>
     rpcPool.run(({ provider }) => provider.getTransaction(txHash))
+  const settleTreasuryAttempts = async (
+    transferId: string,
+    currentTxHash: string,
+  ) => {
+    const attempts = await db
+      .select({
+        id: treasuryTransactionAttempts.id,
+        txHash: treasuryTransactionAttempts.txHash,
+      })
+      .from(treasuryTransactionAttempts)
+      .where(eq(treasuryTransactionAttempts.treasuryTransferId, transferId))
+    const hashes = Array.from(
+      new Set([currentTxHash, ...attempts.map((attempt) => attempt.txHash)]),
+    )
+    for (const txHash of hashes) {
+      const receipt = await transactionReceipt(txHash)
+      if (receipt?.status !== 1) continue
+      await advanceTreasuryStatus(
+        transferId,
+        'BROADCAST',
+        'CONFIRMED',
+        undefined,
+      )
+      await db
+        .update(treasuryTransactionAttempts)
+        .set({
+          status: 'CONFIRMED',
+          confirmedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(treasuryTransactionAttempts.txHash, txHash))
+      return true
+    }
+    return false
+  }
   let credited = 0
 
   const signerWallets = await getSignerPlatformWallets()
@@ -370,16 +408,9 @@ export async function runChainWorker() {
     .where(eq(treasuryTransfers.status, 'BROADCAST'))
   for (const transfer of earlyBroadcastTreasury) {
     if (!transfer.txHash) continue
+    if (await settleTreasuryAttempts(transfer.id, transfer.txHash)) continue
     const receipt = await transactionReceipt(transfer.txHash)
-    if (receipt?.status === 1)
-      await advanceTreasuryStatus(
-        transfer.id,
-        'BROADCAST',
-        'CONFIRMED',
-        undefined,
-      )
-    else if (receipt?.status === 0)
-      await failBroadcastTreasuryTransfer(transfer.id)
+    if (receipt?.status === 0) await failBroadcastTreasuryTransfer(transfer.id)
     else if (
       transfer.broadcastAt &&
       transfer.broadcastAt.getTime() < droppedBefore &&

@@ -7,6 +7,7 @@ import {
   controlledWalletTransfers,
   platformWallets,
   treasuryTransfers,
+  treasuryTransactionAttempts,
 } from '#/db/schema'
 import {
   approveControlledWalletTransfer,
@@ -14,6 +15,7 @@ import {
   createControlledWalletTransfer,
   NATIVE_TRANSFER_FEE_ESTIMATE,
 } from './controlled-wallet-transfer.service'
+import { requestTreasuryGasReplacement } from './signer-api'
 import { getSessionUser } from './session'
 
 const amountSchema = z
@@ -33,25 +35,32 @@ export const getControlledWalletTransferDashboard = createServerFn({
   method: 'GET',
 }).handler(async () => {
   await requireAdmin()
-  const [wallets, transfers, usdtTransfers] = await Promise.all([
-    getDb().select().from(platformWallets),
-    getDb()
-      .select()
-      .from(controlledWalletTransfers)
-      .orderBy(desc(controlledWalletTransfers.createdAt))
-      .limit(100),
-    getDb()
-      .select()
-      .from(treasuryTransfers)
-      .orderBy(desc(treasuryTransfers.createdAt))
-      .limit(100),
-  ])
+  const [wallets, transfers, usdtTransfers, treasuryAttempts] =
+    await Promise.all([
+      getDb().select().from(platformWallets),
+      getDb()
+        .select()
+        .from(controlledWalletTransfers)
+        .orderBy(desc(controlledWalletTransfers.createdAt))
+        .limit(100),
+      getDb()
+        .select()
+        .from(treasuryTransfers)
+        .orderBy(desc(treasuryTransfers.createdAt))
+        .limit(100),
+      getDb()
+        .select()
+        .from(treasuryTransactionAttempts)
+        .orderBy(desc(treasuryTransactionAttempts.createdAt))
+        .limit(200),
+    ])
   return {
     wallets,
     transfers,
     usdtTransfers: usdtTransfers.filter(
       (transfer) => transfer.direction === 'OUTBOUND',
     ),
+    treasuryAttempts,
     estimatedNativeFeeBnb: NATIVE_TRANSFER_FEE_ESTIMATE,
     recommendedSweepReserveBnb:
       process.env.RECOMMENDED_SWEEP_GAS_RESERVE_BNB ?? '0.001',
@@ -95,4 +104,12 @@ export const reviewControlledWalletTransfer = createServerFn({ method: 'POST' })
       await approveControlledWalletTransfer(data.transferId, admin.id)
     else await cancelControlledWalletTransfer(data.transferId, admin.id)
     return { success: true }
+  })
+
+export const replaceStuckTreasuryTransfer = createServerFn({ method: 'POST' })
+  .validator(z.object({ transferId: z.string().uuid() }))
+  .handler(async ({ data }) => {
+    await requireAdmin()
+    const result = await requestTreasuryGasReplacement(data.transferId)
+    return { success: true, txHash: result.txHash }
   })

@@ -120,6 +120,13 @@
       "when": 1790182870074,
       "tag": "0016_material_colonel_america",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790184813589,
+      "tag": "0017_yellow_legion",
+      "breakpoints": true
     }
   ]
 }

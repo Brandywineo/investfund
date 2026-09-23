@@ -59,6 +59,12 @@ export async function requestTreasuryBroadcast(transferId: string) {
   )
 }
 
+export async function requestTreasuryGasReplacement(transferId: string) {
+  return transactionResponse.parse(
+    await signerRequest('/treasury-replace', { transferId }),
+  )
+}
+
 export async function requestControlledWalletTransferBroadcast(
   transferId: string,
 ) {

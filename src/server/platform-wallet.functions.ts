@@ -51,6 +51,7 @@ export const getPlatformWalletDashboard = createServerFn({
     pendingWithdrawals,
     watcher,
     pendingChainTransfers,
+    pendingTreasuryTransfers,
   ] = await Promise.all([
     db.select().from(platformWallets).orderBy(asc(platformWallets.role)),
     db
@@ -113,6 +114,13 @@ export const getPlatformWalletDashboard = createServerFn({
         sql`${controlledWalletTransfers.status} in ('APPROVED', 'PROCESSING', 'BROADCAST')`,
       )
       .then((rows) => rows.at(0)?.value ?? 0),
+    db
+      .select({ value: sql<number>`count(*)::int` })
+      .from(treasuryTransfers)
+      .where(
+        sql`${treasuryTransfers.status} in ('APPROVED', 'PROCESSING', 'BROADCAST')`,
+      )
+      .then((rows) => rows.at(0)?.value ?? 0),
   ])
   const hot = wallets.find((wallet) => wallet.role === 'HOT_WITHDRAWAL')
   const gas = wallets.find((wallet) => wallet.role === 'SWEEP_GAS')
@@ -171,7 +179,7 @@ export const getPlatformWalletDashboard = createServerFn({
       lastHeadBlock: watcher?.lastHeadBlock ?? null,
       lastRunAt: watcher?.lastRunAt ?? null,
       lastError: watcher?.lastError ?? null,
-      pendingChainTransfers,
+      pendingChainTransfers: pendingChainTransfers + pendingTreasuryTransfers,
     },
   }
 })

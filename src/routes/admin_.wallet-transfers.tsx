@@ -10,6 +10,7 @@ import { currentUser } from '#/server/auth.functions'
 import {
   draftControlledWalletTransfer,
   getControlledWalletTransferDashboard,
+  replaceStuckTreasuryTransfer,
   reviewControlledWalletTransfer,
 } from '#/server/controlled-wallet-transfer.functions'
 import {
@@ -397,9 +398,17 @@ function WalletTransfersPage() {
               status={
                 transfer.status === 'APPROVED' && !data.hotWalletHasGas
                   ? 'WAITING FOR BNB'
-                  : transfer.status
+                  : transfer.status === 'BROADCAST' &&
+                      transfer.broadcastAt &&
+                      Date.now() - new Date(transfer.broadcastAt).getTime() >
+                        5 * 60_000
+                    ? 'STUCK · REPLACEMENT AVAILABLE'
+                    : transfer.status
               }
               txHash={transfer.txHash}
+              attempts={data.treasuryAttempts.filter(
+                (attempt) => attempt.treasuryTransferId === transfer.id,
+              )}
             >
               {transfer.status === 'DRAFTED' && (
                 <button
@@ -423,6 +432,27 @@ function WalletTransfersPage() {
                   Confirm & send
                 </button>
               )}
+              {transfer.status === 'BROADCAST' &&
+                transfer.broadcastAt &&
+                Date.now() - new Date(transfer.broadcastAt).getTime() >
+                  5 * 60_000 && (
+                  <button
+                    disabled={Boolean(busyId)}
+                    onClick={() =>
+                      void run(
+                        `replace-${transfer.id}`,
+                        () =>
+                          replaceStuckTreasuryTransfer({
+                            data: { transferId: transfer.id },
+                          }),
+                        'Replacement transaction signed and broadcast with higher gas.',
+                      )
+                    }
+                    className="rounded-xl bg-amber-100 px-4 py-2 text-xs font-bold text-amber-900"
+                  >
+                    Replace with higher gas
+                  </button>
+                )}
             </TransferRow>
           ))}
         </Queue>
@@ -456,6 +486,7 @@ function TransferRow(props: {
   reason: string
   status: string
   txHash: string | null
+  attempts?: Array<{ txHash: string; status: string }>
   children?: ReactNode
 }) {
   return (
@@ -481,6 +512,26 @@ function TransferRow(props: {
           >
             View transaction ↗
           </a>
+        )}
+        {props.attempts && props.attempts.length > 1 && (
+          <details className="mt-3 text-xs text-[#6e857a]">
+            <summary className="cursor-pointer font-bold">
+              Transaction attempts ({props.attempts.length})
+            </summary>
+            <div className="mt-2 space-y-2">
+              {props.attempts.map((attempt) => (
+                <a
+                  key={attempt.txHash}
+                  href={`https://bscscan.com/tx/${attempt.txHash}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block break-all font-mono"
+                >
+                  {attempt.status}: {attempt.txHash} ↗
+                </a>
+              ))}
+            </div>
+          </details>
         )}
       </div>
       {props.children}
