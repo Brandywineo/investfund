@@ -28,6 +28,17 @@ describe('RPC pool policy', () => {
     )
     expect(rpcFailureCategory(new Error('fetch failed'))).toBe('TRANSIENT')
     expect(rpcFailureCategory(new Error('invalid params'))).toBe('PERMANENT')
+    expect(
+      rpcFailureCategory({
+        code: 'CALL_EXCEPTION',
+        info: {
+          error: {
+            code: 429,
+            message: 'Compute units per second capacity exceeded',
+          },
+        },
+      }),
+    ).toBe('RATE_LIMIT')
   })
 
   it('never exposes endpoint paths as the display name', () => {

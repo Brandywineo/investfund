@@ -12,12 +12,19 @@ export function rpcFailureCategory(cause: unknown) {
     status?: number
     code?: number | string
     message?: string
-    info?: { responseStatus?: string; responseBody?: string }
+    info?: {
+      responseStatus?: string
+      responseBody?: string
+      error?: { code?: number | string; message?: string }
+    }
+    error?: { code?: number | string; message?: string }
   }
   const message = [
     record.message,
     record.info?.responseStatus,
     record.info?.responseBody,
+    record.info?.error?.message,
+    record.error?.message,
   ]
     .filter(Boolean)
     .join(' ')
@@ -29,6 +36,10 @@ export function rpcFailureCategory(cause: unknown) {
   if (
     status === 429 ||
     record.code === -32005 ||
+    record.info?.error?.code === 429 ||
+    record.info?.error?.code === -32005 ||
+    record.error?.code === 429 ||
+    record.error?.code === -32005 ||
     message.includes('429') ||
     message.includes('rate limit') ||
     message.includes('limit exceeded') ||
