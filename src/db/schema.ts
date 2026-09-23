@@ -732,6 +732,11 @@ export const chainWatcherState = pgTable('chain_watcher_state', {
   lastHeadBlock: bigint('last_head_block', { mode: 'number' }),
   lastRunAt: timestamp('last_run_at', { withTimezone: true }),
   lastError: text('last_error'),
+  activeRpcIndex: integer('active_rpc_index').default(0).notNull(),
+  rpcFailoverCount: integer('rpc_failover_count').default(0).notNull(),
+  lastRpcFailoverAt: timestamp('last_rpc_failover_at', {
+    withTimezone: true,
+  }),
   ...timestamps,
 })
 

@@ -17,6 +17,7 @@ import {
 } from '#/db/schema'
 import { formatUsdt, money } from '#/domain/money'
 import { chainWorkerHealth } from '#/domain/chain-worker'
+import { configuredRpcUrls, sanitizedRpcHostname } from '#/domain/rpc-pool'
 import { reserveRequirement } from '#/domain/treasury'
 import { postLedgerTransaction } from './ledger.service'
 import { recordTreasuryReturn } from './custody.service'
@@ -139,13 +140,11 @@ export const getPlatformWalletDashboard = createServerFn({
     watcher?.lastHeadBlock ?? watcher?.lastScannedBlock ?? 0,
   )
   const rpcHealth = watcher?.lastRunAt ? health.status : 'OFFLINE'
-  let rpcProvider = 'Not configured'
-  try {
-    if (process.env.BSC_RPC_URL)
-      rpcProvider = new URL(process.env.BSC_RPC_URL).hostname
-  } catch {
-    rpcProvider = 'Configured endpoint'
-  }
+  const rpcUrls = configuredRpcUrls()
+  const activeRpcIndex = watcher?.activeRpcIndex ?? 0
+  const rpcProvider = rpcUrls.length
+    ? sanitizedRpcHostname(rpcUrls[activeRpcIndex % rpcUrls.length])
+    : 'Not configured'
   return {
     wallets,
     transactions,
@@ -162,6 +161,10 @@ export const getPlatformWalletDashboard = createServerFn({
         ? gasBalance.dividedToIntegerBy(estimatedSweepCost).toString()
         : '0',
       rpcProvider,
+      rpcEndpointCount: rpcUrls.length,
+      activeRpc: rpcUrls.length ? activeRpcIndex + 1 : null,
+      rpcFailoverCount: watcher?.rpcFailoverCount ?? 0,
+      lastRpcFailoverAt: watcher?.lastRpcFailoverAt ?? null,
       rpcHealth,
       blockLag: health.blockLag,
       lastScannedBlock: watcher?.lastScannedBlock ?? null,

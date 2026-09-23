@@ -234,7 +234,8 @@ function PlatformWalletsPage() {
                 RPC and scanner health
               </h2>
               <p className="mt-2 text-sm text-white/60">
-                {data.summary.rpcProvider}
+                {data.summary.rpcProvider} · {data.summary.rpcEndpointCount}{' '}
+                endpoint{data.summary.rpcEndpointCount === 1 ? '' : 's'}
               </p>
             </div>
             <span
@@ -249,8 +250,15 @@ function PlatformWalletsPage() {
               {data.summary.rpcHealth.replaceAll('_', ' ')}
             </span>
           </div>
-          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {[
+              [
+                'Active RPC',
+                data.summary.activeRpc
+                  ? `RPC ${data.summary.activeRpc}`
+                  : 'Waiting',
+              ],
+              ['Failovers', data.summary.rpcFailoverCount.toLocaleString()],
               ['Block lag', data.summary.blockLag.toLocaleString()],
               [
                 'Last scanned',
@@ -266,6 +274,12 @@ function PlatformWalletsPage() {
                 data.summary.lastRunAt
                   ? new Date(data.summary.lastRunAt).toLocaleString()
                   : 'Never',
+              ],
+              [
+                'Last failover',
+                data.summary.lastRpcFailoverAt
+                  ? new Date(data.summary.lastRpcFailoverAt).toLocaleString()
+                  : 'None',
               ],
             ].map(([name, value]) => (
               <div key={name} className="rounded-2xl bg-white/10 p-4">

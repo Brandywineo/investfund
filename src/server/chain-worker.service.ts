@@ -1,7 +1,6 @@
 import {
   Contract,
   Interface,
-  JsonRpcProvider,
   formatUnits,
   getAddress,
   id,
@@ -31,6 +30,7 @@ import {
   settleBroadcastWithdrawal,
 } from './custody.service'
 import { settleControlledWalletTransfer } from './controlled-wallet-transfer.service'
+import { RpcPool } from './rpc-pool'
 import {
   getSignerPlatformWallets,
   requestTreasuryBroadcast,
@@ -92,7 +92,7 @@ async function mapConcurrent<T, TResult>(
 }
 
 async function chunkedLogs(input: {
-  provider: JsonRpcProvider
+  rpcPool: RpcPool
   filter: Filter
   fromBlock: number
   toBlock: number
@@ -107,11 +107,13 @@ async function chunkedLogs(input: {
   )
   const groups = await mapConcurrent(ranges, input.concurrency, (range) =>
     retry(() =>
-      input.provider.getLogs({
-        ...input.filter,
-        fromBlock: range.fromBlock,
-        toBlock: range.toBlock,
-      }),
+      input.rpcPool.run(({ provider }) =>
+        provider.getLogs({
+          ...input.filter,
+          fromBlock: range.fromBlock,
+          toBlock: range.toBlock,
+        }),
+      ),
     ),
   )
   return groups.flat()
@@ -128,7 +130,7 @@ type RpcBlock = {
 }
 
 async function nativeTransfers(
-  rpcUrl: string,
+  rpcPool: RpcPool,
   fromBlock: number,
   toBlock: number,
   concurrency: number,
@@ -142,46 +144,56 @@ async function nativeTransfers(
     concurrency,
     (batch) =>
       retry(async () => {
-        const response = await fetch(rpcUrl, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(
-            batch.map((blockNumber, index) => ({
-              jsonrpc: '2.0',
-              id: index + 1,
-              method: 'eth_getBlockByNumber',
-              params: [`0x${blockNumber.toString(16)}`, true],
-            })),
-          ),
-          signal: AbortSignal.timeout(20_000),
+        return rpcPool.run(async ({ url }) => {
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(
+              batch.map((blockNumber, index) => ({
+                jsonrpc: '2.0',
+                id: index + 1,
+                method: 'eth_getBlockByNumber',
+                params: [`0x${blockNumber.toString(16)}`, true],
+              })),
+            ),
+            signal: AbortSignal.timeout(20_000),
+          })
+          if (!response.ok) {
+            const cause = new Error(
+              `Native transaction scan returned HTTP ${response.status}`,
+            ) as Error & { status: number }
+            cause.status = response.status
+            throw cause
+          }
+          const payload = (await response.json()) as Array<{
+            result?: RpcBlock
+            error?: { code?: number; message?: string }
+          }>
+          if (!Array.isArray(payload))
+            throw new Error('RPC provider does not support batched native scans')
+          const failure = payload.find((item) => item.error)
+          if (failure?.error) {
+            const cause = new Error(
+              failure.error.message || 'Native transaction scan failed',
+            ) as Error & { code?: number }
+            cause.code = failure.error.code
+            throw cause
+          }
+          return payload.flatMap((item) => (item.result ? [item.result] : []))
         })
-        if (!response.ok)
-          throw new Error(
-            `Native transaction scan returned HTTP ${response.status}`,
-          )
-        const payload = (await response.json()) as Array<{
-          result?: RpcBlock
-          error?: { message?: string }
-        }>
-        if (!Array.isArray(payload))
-          throw new Error('RPC provider does not support batched native scans')
-        const failure = payload.find((item) => item.error)
-        if (failure?.error)
-          throw new Error(
-            failure.error.message || 'Native transaction scan failed',
-          )
-        return payload.flatMap((item) => (item.result ? [item.result] : []))
       }),
   )
   return groups.flat()
 }
 
-async function finalizedBlock(provider: JsonRpcProvider, head: number) {
+async function finalizedBlock(rpcPool: RpcPool, head: number) {
   try {
-    const block = (await provider.send('eth_getBlockByNumber', [
-      'finalized',
-      false,
-    ])) as { number?: string } | null
+    const block = await rpcPool.run(
+      ({ provider }) =>
+        provider.send('eth_getBlockByNumber', ['finalized', false]) as Promise<{
+          number?: string
+        } | null>,
+    )
     if (block?.number) return Number(BigInt(block.number))
   } catch {
     // Providers without the finalized tag fall back to two-block finality.
@@ -190,8 +202,6 @@ async function finalizedBlock(provider: JsonRpcProvider, head: number) {
 }
 
 export async function runChainWorker() {
-  const rpcUrl = process.env.BSC_RPC_URL
-  if (!rpcUrl) throw new Error('BSC_RPC_URL is required')
   const db = getDb()
   const settings = await db
     .select()
@@ -205,20 +215,21 @@ export async function runChainWorker() {
   )
     throw new Error('A valid USDT token contract must be configured')
 
-  const provider = new JsonRpcProvider(rpcUrl, settings.chainId, {
-    staticNetwork: true,
-  })
-  const network = await provider.getNetwork()
-  if (Number(network.chainId) !== settings.chainId)
-    throw new Error('RPC chain ID does not match custody settings')
-  const head = await provider.getBlockNumber()
-  const finalized = await finalizedBlock(provider, head)
   const state = await db
     .select()
     .from(chainWatcherState)
     .where(eq(chainWatcherState.id, 1))
     .limit(1)
     .then((rows) => rows.at(0))
+  const rpcPool = new RpcPool({
+    chainId: settings.chainId,
+    startIndex: state?.activeRpcIndex ?? 0,
+  })
+  const network = await rpcPool.run(({ provider }) => provider.getNetwork())
+  if (Number(network.chainId) !== settings.chainId)
+    throw new Error('RPC chain ID does not match custody settings')
+  const head = await rpcPool.run(({ provider }) => provider.getBlockNumber())
+  const finalized = await finalizedBlock(rpcPool, head)
   const configuredStart = Number(process.env.BSC_START_BLOCK || 0)
   const configuredScanBlocks = Number(process.env.BSC_SCAN_BLOCKS || 50)
   const scanBlocks = Number.isSafeInteger(configuredScanBlocks)
@@ -253,8 +264,30 @@ export async function runChainWorker() {
   const addressMap = new Map(
     addressRows.map((row) => [row.address.toLowerCase(), row]),
   )
-  const token = new Contract(settings.tokenContractAddress, TOKEN_ABI, provider)
-  const decimals = Number(await token.decimals())
+  const decimals = Number(
+    await rpcPool.run(({ provider }) =>
+      new Contract(
+        settings.tokenContractAddress!,
+        TOKEN_ABI,
+        provider,
+      ).decimals(),
+    ),
+  )
+  const tokenBalanceOf = (address: string) =>
+    rpcPool.run(
+      ({ provider }) =>
+        new Contract(
+          settings.tokenContractAddress!,
+          TOKEN_ABI,
+          provider,
+        ).balanceOf(address) as Promise<bigint>,
+    )
+  const nativeBalanceOf = (address: string) =>
+    rpcPool.run(({ provider }) => provider.getBalance(address))
+  const transactionReceipt = (txHash: string) =>
+    rpcPool.run(({ provider }) => provider.getTransactionReceipt(txHash))
+  const transactionByHash = (txHash: string) =>
+    rpcPool.run(({ provider }) => provider.getTransaction(txHash))
   let credited = 0
 
   const signerWallets = await getSignerPlatformWallets()
@@ -287,8 +320,8 @@ export async function runChainWorker() {
   await Promise.all(
     managedWalletRows.map(async (wallet) => {
       const [tokenBalance, nativeBalance] = await Promise.all([
-        token.balanceOf(wallet.address) as Promise<bigint>,
-        provider.getBalance(wallet.address),
+        tokenBalanceOf(wallet.address),
+        nativeBalanceOf(wallet.address),
       ])
       await db
         .update(platformWallets)
@@ -317,13 +350,13 @@ export async function runChainWorker() {
     .where(eq(withdrawals.status, 'BROADCAST'))
   for (const withdrawal of earlyBroadcastWithdrawals) {
     if (!withdrawal.txHash) continue
-    const receipt = await provider.getTransactionReceipt(withdrawal.txHash)
+    const receipt = await transactionReceipt(withdrawal.txHash)
     if (receipt)
       await settleBroadcastWithdrawal(withdrawal.id, receipt.status === 1)
     else if (
       withdrawal.broadcastAt &&
       withdrawal.broadcastAt.getTime() < droppedBefore &&
-      !(await provider.getTransaction(withdrawal.txHash))
+      !(await transactionByHash(withdrawal.txHash))
     )
       await requestSignedTransactionRebroadcast('WITHDRAWAL', withdrawal.id)
   }
@@ -337,7 +370,7 @@ export async function runChainWorker() {
     .where(eq(treasuryTransfers.status, 'BROADCAST'))
   for (const transfer of earlyBroadcastTreasury) {
     if (!transfer.txHash) continue
-    const receipt = await provider.getTransactionReceipt(transfer.txHash)
+    const receipt = await transactionReceipt(transfer.txHash)
     if (receipt?.status === 1)
       await advanceTreasuryStatus(
         transfer.id,
@@ -350,7 +383,7 @@ export async function runChainWorker() {
     else if (
       transfer.broadcastAt &&
       transfer.broadcastAt.getTime() < droppedBefore &&
-      !(await provider.getTransaction(transfer.txHash))
+      !(await transactionByHash(transfer.txHash))
     )
       await requestSignedTransactionRebroadcast('TREASURY', transfer.id)
   }
@@ -364,13 +397,13 @@ export async function runChainWorker() {
     .where(eq(controlledWalletTransfers.status, 'BROADCAST'))
   for (const transfer of earlyBroadcastControlled) {
     if (!transfer.txHash) continue
-    const receipt = await provider.getTransactionReceipt(transfer.txHash)
+    const receipt = await transactionReceipt(transfer.txHash)
     if (receipt)
       await settleControlledWalletTransfer(transfer.id, receipt.status === 1)
     else if (
       transfer.broadcastAt &&
       transfer.broadcastAt.getTime() < droppedBefore &&
-      !(await provider.getTransaction(transfer.txHash))
+      !(await transactionByHash(transfer.txHash))
     )
       await requestSignedTransactionRebroadcast('CONTROLLED', transfer.id)
   }
@@ -443,7 +476,7 @@ export async function runChainWorker() {
       for (const direction of ['INCOMING', 'OUTGOING'] as const) {
         const walletTopic = zeroPadValue(getAddress(wallet.address), 32)
         const logs = await chunkedLogs({
-          provider,
+          rpcPool,
           filter: {
             address: settings.tokenContractAddress,
             topics:
@@ -520,7 +553,7 @@ export async function runChainWorker() {
 
     {
       const nativeBlocks = await nativeTransfers(
-        rpcUrl,
+        rpcPool,
         fromBlock,
         toBlock,
         rpcConcurrency,
@@ -609,13 +642,13 @@ export async function runChainWorker() {
     for (const sweep of knownSweeps.filter(
       (row) => row.gasTxHash && !recordedGasSweepIds.has(row.id),
     )) {
-      const transaction = await provider
-        .getTransaction(sweep.gasTxHash!)
-        .catch(() => null)
+      const transaction = await transactionByHash(sweep.gasTxHash!).catch(
+        () => null,
+      )
       if (!transaction || transaction.value <= 0n || !transaction.to) continue
-      const receipt = await provider
-        .getTransactionReceipt(sweep.gasTxHash!)
-        .catch(() => null)
+      const receipt = await transactionReceipt(sweep.gasTxHash!).catch(
+        () => null,
+      )
       await db
         .insert(platformWalletTransactions)
         .values({
@@ -669,7 +702,7 @@ export async function runChainWorker() {
       const recipientFilter =
         recipientTopics.length === 1 ? recipientTopics[0] : recipientTopics
       const logs = await chunkedLogs({
-        provider,
+        rpcPool,
         filter: {
           address: settings.tokenContractAddress,
           topics: [TRANSFER_TOPIC, null, recipientFilter],
@@ -730,8 +763,8 @@ export async function runChainWorker() {
       addressChunk.map(async (addressRow) => {
         try {
           const [tokenBalance, nativeBalance] = await Promise.all([
-            token.balanceOf(addressRow.address) as Promise<bigint>,
-            provider.getBalance(addressRow.address),
+            tokenBalanceOf(addressRow.address),
+            nativeBalanceOf(addressRow.address),
           ])
           await db
             .update(walletAddresses)
@@ -807,7 +840,7 @@ export async function runChainWorker() {
     .where(eq(walletSweeps.status, 'SWEEP_BROADCAST'))
   for (const sweep of pendingSweeps) {
     if (!sweep.sweepTxHash) continue
-    const receipt = await provider.getTransactionReceipt(sweep.sweepTxHash)
+    const receipt = await transactionReceipt(sweep.sweepTxHash)
     if (!receipt) continue
     if (receipt.status === 1) {
       await db
@@ -879,7 +912,7 @@ export async function runChainWorker() {
     .where(eq(withdrawals.status, 'BROADCAST'))
   for (const withdrawal of broadcastWithdrawals) {
     if (!withdrawal.txHash) continue
-    const receipt = await provider.getTransactionReceipt(withdrawal.txHash)
+    const receipt = await transactionReceipt(withdrawal.txHash)
     if (receipt)
       await settleBroadcastWithdrawal(withdrawal.id, receipt.status === 1)
   }
@@ -969,7 +1002,7 @@ export async function runChainWorker() {
     .where(eq(treasuryTransfers.status, 'BROADCAST'))
   for (const transfer of broadcastTreasury) {
     if (!transfer.txHash) continue
-    const receipt = await provider.getTransactionReceipt(transfer.txHash)
+    const receipt = await transactionReceipt(transfer.txHash)
     if (receipt?.status === 1)
       await advanceTreasuryStatus(
         transfer.id,
@@ -990,11 +1023,14 @@ export async function runChainWorker() {
     .where(eq(controlledWalletTransfers.status, 'BROADCAST'))
   for (const transfer of broadcastControlledTransfers) {
     if (!transfer.txHash) continue
-    const receipt = await provider.getTransactionReceipt(transfer.txHash)
+    const receipt = await transactionReceipt(transfer.txHash)
     if (receipt)
       await settleControlledWalletTransfer(transfer.id, receipt.status === 1)
   }
 
+  const rpcSnapshot = rpcPool.snapshot()
+  const rpcFailoverCount =
+    (state?.rpcFailoverCount ?? 0) + rpcSnapshot.failovers
   await db
     .insert(chainWatcherState)
     .values({
@@ -1004,6 +1040,10 @@ export async function runChainWorker() {
       lastHeadBlock: head,
       lastRunAt: new Date(),
       lastError: null,
+      activeRpcIndex: rpcSnapshot.activeIndex,
+      rpcFailoverCount,
+      lastRpcFailoverAt:
+        rpcSnapshot.lastFailoverAt ?? state?.lastRpcFailoverAt ?? null,
     })
     .onConflictDoUpdate({
       target: chainWatcherState.id,
@@ -1012,6 +1052,10 @@ export async function runChainWorker() {
         lastHeadBlock: head,
         lastRunAt: new Date(),
         lastError: null,
+        activeRpcIndex: rpcSnapshot.activeIndex,
+        rpcFailoverCount,
+        lastRpcFailoverAt:
+          rpcSnapshot.lastFailoverAt ?? state?.lastRpcFailoverAt ?? null,
         updatedAt: new Date(),
       },
     })
@@ -1026,5 +1070,8 @@ export async function runChainWorker() {
     treasuryBroadcast,
     controlledTransfersBroadcast,
     platformTransactions,
+    activeRpc: rpcSnapshot.activeIndex + 1,
+    rpcEndpoints: rpcSnapshot.endpointCount,
+    rpcFailovers: rpcSnapshot.failovers,
   }
 }
