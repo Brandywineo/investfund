@@ -24,6 +24,7 @@
     "wallet:inspect": "tsx scripts/inspect-hd-wallet.ts",
     "signer:start": "tsx scripts/hd-signer-service.ts",
     "chain:run": "tsx scripts/run-chain-worker.ts",
+    "mt5:sync": "tsx scripts/run-mt5-sync.ts",
     "push:keys": "tsx scripts/generate-vapid-keys.ts"
   },
   "dependencies": {

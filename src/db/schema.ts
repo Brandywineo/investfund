@@ -102,6 +102,12 @@ export const tradingPositionStatus = pgEnum('trading_position_status', [
   'CLOSED',
   'CANCELLED',
 ])
+export const mt5SyncStatus = pgEnum('mt5_sync_status', [
+  'UNCONFIGURED',
+  'ONLINE',
+  'DEGRADED',
+  'OFFLINE',
+])
 export const investmentExitStatus = pgEnum('investment_exit_status', [
   'REQUESTED',
   'DEFERRED',
@@ -551,6 +557,107 @@ export const tradingPositions = pgTable(
     ),
     check('trading_position_side', sql`${table.side} in ('BUY', 'SELL')`),
     check('trading_position_entry_positive', sql`${table.entryPrice} > 0`),
+  ],
+)
+
+export const mt5SyncState = pgTable('mt5_sync_state', {
+  id: integer('id').primaryKey().default(1),
+  status: mt5SyncStatus('status').default('UNCONFIGURED').notNull(),
+  serverName: text('server_name'),
+  terminalVersion: text('terminal_version'),
+  lastSyncStartedAt: timestamp('last_sync_started_at', { withTimezone: true }),
+  lastSuccessfulSyncAt: timestamp('last_successful_sync_at', {
+    withTimezone: true,
+  }),
+  lastHistoryCursorAt: timestamp('last_history_cursor_at', {
+    withTimezone: true,
+  }),
+  lastError: text('last_error'),
+  ...timestamps,
+})
+
+export const mt5Positions = pgTable(
+  'mt5_positions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    ticket: text('ticket').notNull(),
+    identifier: text('identifier'),
+    symbol: text('symbol').notNull(),
+    side: text('side').notNull(),
+    volume: numeric('volume', { precision: 20, scale: 8 }).notNull(),
+    entryPrice: numeric('entry_price', { precision: 30, scale: 10 }).notNull(),
+    currentPrice: numeric('current_price', { precision: 30, scale: 10 }),
+    stopLoss: numeric('stop_loss', { precision: 30, scale: 10 }),
+    takeProfit: numeric('take_profit', { precision: 30, scale: 10 }),
+    floatingProfit: numeric('floating_profit', { precision: 20, scale: 8 }),
+    swap: numeric('swap', { precision: 20, scale: 8 }),
+    openedAt: timestamp('opened_at', { withTimezone: true }).notNull(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('mt5_positions_ticket_unique').on(table.ticket),
+    index('mt5_positions_opened_idx').on(table.openedAt),
+    check('mt5_position_side', sql`${table.side} in ('BUY', 'SELL')`),
+    check('mt5_position_volume_positive', sql`${table.volume} > 0`),
+  ],
+)
+
+export const mt5Orders = pgTable(
+  'mt5_orders',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    ticket: text('ticket').notNull(),
+    symbol: text('symbol').notNull(),
+    orderType: text('order_type').notNull(),
+    volumeInitial: numeric('volume_initial', {
+      precision: 20,
+      scale: 8,
+    }).notNull(),
+    volumeCurrent: numeric('volume_current', {
+      precision: 20,
+      scale: 8,
+    }).notNull(),
+    requestedPrice: numeric('requested_price', { precision: 30, scale: 10 }),
+    stopLoss: numeric('stop_loss', { precision: 30, scale: 10 }),
+    takeProfit: numeric('take_profit', { precision: 30, scale: 10 }),
+    placedAt: timestamp('placed_at', { withTimezone: true }).notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('mt5_orders_ticket_unique').on(table.ticket),
+    index('mt5_orders_placed_idx').on(table.placedAt),
+    check('mt5_order_volume_positive', sql`${table.volumeInitial} > 0`),
+  ],
+)
+
+export const mt5Deals = pgTable(
+  'mt5_deals',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    ticket: text('ticket').notNull(),
+    orderTicket: text('order_ticket'),
+    positionTicket: text('position_ticket'),
+    symbol: text('symbol').notNull(),
+    side: text('side').notNull(),
+    entry: text('entry').notNull(),
+    volume: numeric('volume', { precision: 20, scale: 8 }).notNull(),
+    price: numeric('price', { precision: 30, scale: 10 }).notNull(),
+    profit: numeric('profit', { precision: 20, scale: 8 }).notNull(),
+    commission: numeric('commission', { precision: 20, scale: 8 }).notNull(),
+    swap: numeric('swap', { precision: 20, scale: 8 }).notNull(),
+    fee: numeric('fee', { precision: 20, scale: 8 }).notNull(),
+    executedAt: timestamp('executed_at', { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('mt5_deals_ticket_unique').on(table.ticket),
+    index('mt5_deals_executed_idx').on(table.executedAt),
+    index('mt5_deals_position_idx').on(table.positionTicket),
+    check('mt5_deal_side', sql`${table.side} in ('BUY', 'SELL')`),
+    check('mt5_deal_volume_non_negative', sql`${table.volume} >= 0`),
   ],
 )
 

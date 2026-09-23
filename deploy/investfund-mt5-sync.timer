@@ -1,0 +1,13 @@
+[Unit]
+Description=Synchronize InvestFund MT5 reporting feed
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=10s
+AccuracySec=1s
+Persistent=true
+Unit=investfund-mt5-sync.service
+
+[Install]
+WantedBy=timers.target
+

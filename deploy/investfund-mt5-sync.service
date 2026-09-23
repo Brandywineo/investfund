@@ -1,0 +1,14 @@
+[Unit]
+Description=InvestFund read-only MT5 synchronization
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=deno
+Group=deno
+WorkingDirectory=/home/deno/web/ndumb.hs.vc/public_html
+EnvironmentFile=/home/deno/web/ndumb.hs.vc/public_html/.env
+ExecStart=/home/deno/.bun/bin/bun run mt5:sync
+NoNewPrivileges=true
+PrivateTmp=true
+
