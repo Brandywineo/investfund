@@ -18,9 +18,10 @@ TOKEN = os.environ["MT5_BRIDGE_TOKEN"]
 HOST = os.getenv("MT5_BRIDGE_HOST", "127.0.0.1")
 PORT = int(os.getenv("MT5_BRIDGE_PORT", "9020"))
 TERMINAL_PATH = os.environ["MT5_TERMINAL_PATH"]
-LOGIN = int(os.environ["MT5_LOGIN"])
-PASSWORD = os.environ["MT5_PASSWORD"]
-SERVER = os.environ["MT5_SERVER"]
+LOGIN_TEXT = os.getenv("MT5_LOGIN", "").strip()
+LOGIN = int(LOGIN_TEXT) if LOGIN_TEXT else None
+PASSWORD = os.getenv("MT5_PASSWORD", "")
+SERVER = os.getenv("MT5_SERVER", "").strip()
 HISTORY_START = os.getenv("MT5_HISTORY_START", "2000-01-01T00:00:00+00:00")
 
 
@@ -28,9 +29,33 @@ def iso_from_seconds(value):
     return datetime.fromtimestamp(value, tz=timezone.utc).isoformat()
 
 
+def expected_account_connected():
+    account = mt5.account_info()
+    if account is None:
+        return False
+    if LOGIN is not None and account.login != LOGIN:
+        return False
+    if SERVER and account.server != SERVER:
+        return False
+    return True
+
+
 def connected():
-    if mt5.terminal_info() is not None:
+    if mt5.terminal_info() is not None and expected_account_connected():
         return True
+
+    # First attach to the terminal's saved authenticated session. This supports
+    # terminals authenticated interactively or by QR without persisting a
+    # trading password in the bridge environment.
+    if mt5.initialize(TERMINAL_PATH, timeout=60_000):
+        if expected_account_connected():
+            return True
+        mt5.shutdown()
+
+    # An investor password remains the preferred unattended-login option. It
+    # is only attempted when all three credential fields are configured.
+    if LOGIN is None or not PASSWORD or not SERVER:
+        return False
     return bool(
         mt5.initialize(
             TERMINAL_PATH,
@@ -38,17 +63,17 @@ def connected():
             password=PASSWORD,
             server=SERVER,
             timeout=60_000,
-            portable=True,
         )
-    )
+    ) and expected_account_connected()
 
 
 def health():
     ok = connected()
     version = mt5.version() if ok else None
+    account = mt5.account_info() if ok else None
     return {
         "connected": ok,
-        "server": SERVER if ok else None,
+        "server": account.server if account else None,
         "terminalVersion": ".".join(map(str, version)) if version else None,
     }
 
@@ -177,4 +202,3 @@ if __name__ == "__main__":
         raise SystemExit(f"MT5 initialization failed: {mt5.last_error()}")
     print(f"Read-only MT5 bridge listening on http://{HOST}:{PORT}")
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
-

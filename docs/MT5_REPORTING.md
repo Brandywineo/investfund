@@ -22,7 +22,7 @@ The bridge environment requires:
 ```text
 MT5_TERMINAL_PATH=C:\\investfund-mt5\\terminal64.exe
 MT5_LOGIN=12345678
-MT5_PASSWORD=investor-password
+MT5_PASSWORD=
 MT5_SERVER=Broker-Server
 MT5_BRIDGE_TOKEN=long-independent-secret
 MT5_BRIDGE_HOST=127.0.0.1
@@ -37,6 +37,11 @@ MT5_BRIDGE_URL=http://127.0.0.1:9020
 MT5_BRIDGE_TOKEN=the-same-independent-secret
 MT5_BRIDGE_TIMEOUT_MS=10000
 ```
+
+`MT5_PASSWORD` may be empty while the terminal has a saved authenticated
+session (including a QR-authenticated session). The bridge verifies that the
+saved account matches `MT5_LOGIN` and `MT5_SERVER`. Configure the broker's
+investor password later for unattended recovery if the saved session expires.
 
 Apply the database migration, build the app, install the units from `deploy/`,
 then enable `investfund-mt5-sync.timer`. The first successful synchronization

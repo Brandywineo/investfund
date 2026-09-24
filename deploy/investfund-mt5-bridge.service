@@ -1,0 +1,19 @@
+[Unit]
+Description=InvestFund loopback-only read-only MT5 bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=investfund-mt5
+Group=investfund-mt5
+WorkingDirectory=/home/investfund-mt5
+EnvironmentFile=/etc/investfund/mt5-bridge.env
+ExecStart=/home/deno/web/ndumb.hs.vc/public_html/scripts/run-mt5-bridge.sh
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
