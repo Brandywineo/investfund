@@ -183,23 +183,103 @@ function Home() {
               <div>
                 <p className="text-sm text-[#557065]">Trading desk</p>
                 <h2 className="mt-1 text-xl font-semibold">
-                  {portfolio.openPositionCount
-                    ? `${portfolio.openPositionCount} open position${portfolio.openPositionCount === 1 ? '' : 's'}`
-                    : 'No open positions'}
+                  {!portfolio.canViewLivePositions
+                    ? 'Platform MT5 trading'
+                    : portfolio.openPositionCount
+                      ? `${portfolio.openPositionCount} open position${portfolio.openPositionCount === 1 ? '' : 's'}`
+                      : 'No open positions'}
                 </h2>
               </div>
               <span className="rounded-full bg-[#eef1eb] px-3 py-1.5 text-xs font-bold text-[#557065]">
-                {portfolio.openPositionCount ? 'LIVE' : 'READY'}
+                {portfolio.canViewLivePositions && portfolio.openPositionCount
+                  ? 'LIVE'
+                  : 'TRADING'}
               </span>
             </div>
-            <p className="mt-8 text-sm leading-6 text-[#557065]">
-              {portfolio.openPositionCount
-                ? `${portfolio.latestPositionSymbol} is the latest position reported by the trading desk.`
-                : 'The trading desk is ready. New positions appear here after an administrator publishes them.'}
-            </p>
-            <Link to="/trading" className="mt-5 inline-block text-sm font-bold">
-              View trading desk →
-            </Link>
+            {!portfolio.canViewLivePositions ? (
+              <>
+                <p className="mt-8 text-sm leading-6 text-[#557065]">
+                  Review completed platform trades. Start investing to follow
+                  live positions and partial exits.
+                </p>
+                <div className="mt-5 flex flex-wrap gap-4 text-sm font-bold">
+                  <Link to="/trading">View trade history →</Link>
+                  <Link to="/invest" className="text-[#85ae38]">
+                    Start investing
+                  </Link>
+                </div>
+              </>
+            ) : portfolio.latestPosition ? (
+              <>
+                <div className="mt-7 rounded-2xl bg-[#f3f6f0] p-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-[.13em] text-[#6e857a]">
+                        Latest position
+                      </p>
+                      <p className="mt-2 text-lg font-semibold">
+                        {portfolio.latestPosition.symbol} ·{' '}
+                        {portfolio.latestPosition.side}
+                      </p>
+                    </div>
+                    <span className="text-sm font-semibold">
+                      {Number(portfolio.latestPosition.volume).toLocaleString(
+                        undefined,
+                        { maximumFractionDigits: 8 },
+                      )}{' '}
+                      lots
+                    </span>
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <p className="text-xs text-[#6e857a]">Entry</p>
+                      <b>
+                        {Number(
+                          portfolio.latestPosition.entryPrice,
+                        ).toLocaleString(undefined, {
+                          maximumFractionDigits: 10,
+                        })}
+                      </b>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-[#6e857a]">Live P/L</p>
+                      <b
+                        className={
+                          Number(
+                            portfolio.latestPosition.floatingProfit ?? 0,
+                          ) >= 0
+                            ? 'text-green-700'
+                            : 'text-red-700'
+                        }
+                      >
+                        {Number(
+                          portfolio.latestPosition.floatingProfit ?? 0,
+                        ).toFixed(2)}
+                      </b>
+                    </div>
+                  </div>
+                </div>
+                <Link
+                  to="/trading"
+                  className="mt-5 inline-block text-sm font-bold"
+                >
+                  View platform trading →
+                </Link>
+              </>
+            ) : (
+              <>
+                <p className="mt-8 text-sm leading-6 text-[#557065]">
+                  No platform positions are currently open. Completed trades
+                  remain available in the trading desk.
+                </p>
+                <Link
+                  to="/trading"
+                  className="mt-5 inline-block text-sm font-bold"
+                >
+                  View trade history →
+                </Link>
+              </>
+            )}
           </article>
 
           <article className="rounded-[2rem] bg-white p-7 ring-1 ring-black/5 md:p-8">

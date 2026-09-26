@@ -8,6 +8,7 @@ import {
   mt5Positions,
   mt5SyncState,
 } from '#/db/schema'
+import { aggregateMt5PositionHistory } from '#/domain/mt5-history'
 import { getSessionUser } from './session'
 import { synchronizeMt5 } from './mt5-sync.service'
 
@@ -35,7 +36,17 @@ async function deskData() {
       .limit(1)
       .then((rows) => rows.at(0) ?? null),
   ])
-  return { positions, orders, deals, sync }
+  const positionHistory = aggregateMt5PositionHistory(deals, positions)
+  return {
+    positions,
+    orders,
+    deals,
+    positionHistory,
+    completedPositions: positionHistory.filter(
+      (position) => position.status === 'CLOSED',
+    ),
+    sync,
+  }
 }
 
 export const getTradingDesk = createServerFn({ method: 'GET' }).handler(
@@ -54,7 +65,20 @@ export const getTradingDesk = createServerFn({ method: 'GET' }).handler(
         .then((rows) => rows.at(0)),
       deskData(),
     ])
-    return { hasInvestment: Boolean(activeInvestment), ...desk }
+    const canViewLive = Boolean(activeInvestment) || user.role === 'ADMIN'
+    return {
+      hasInvestment: Boolean(activeInvestment),
+      canViewLive,
+      positions: canViewLive ? desk.positions : [],
+      orders: canViewLive ? desk.orders : [],
+      openPositionHistory: canViewLive
+        ? desk.positionHistory.filter(
+            (position) => position.status !== 'CLOSED',
+          )
+        : [],
+      completedPositions: desk.completedPositions,
+      sync: desk.sync,
+    }
   },
 )
 

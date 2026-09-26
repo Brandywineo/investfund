@@ -7,9 +7,9 @@ import {
   investments,
   ledgerAccounts,
   ledgerEntries,
+  mt5Positions,
   platformSettings,
   referralRelationships,
-  tradingPositions,
 } from '#/db/schema'
 import { formatUsdt, money } from '#/domain/money'
 import { createInvestment } from './ledger.service'
@@ -89,12 +89,24 @@ export const getPortfolio = createServerFn({ method: 'GET' }).handler(
           .limit(1)
           .then((rows) => rows.at(0)),
         db
-          .select({ symbol: tradingPositions.symbol })
-          .from(tradingPositions)
-          .where(eq(tradingPositions.status, 'OPEN'))
-          .orderBy(desc(tradingPositions.openedAt))
-          .limit(20),
+          .select({
+            ticket: mt5Positions.ticket,
+            symbol: mt5Positions.symbol,
+            side: mt5Positions.side,
+            volume: mt5Positions.volume,
+            entryPrice: mt5Positions.entryPrice,
+            currentPrice: mt5Positions.currentPrice,
+            floatingProfit: mt5Positions.floatingProfit,
+            openedAt: mt5Positions.openedAt,
+          })
+          .from(mt5Positions)
+          .orderBy(desc(mt5Positions.openedAt)),
       ])
+    const canViewLivePositions =
+      user.role === 'ADMIN' || Boolean(latestInvestment)
+    const latestPosition = canViewLivePositions
+      ? (openPositions.at(0) ?? null)
+      : null
     return {
       user,
       available: formatUsdt(available),
@@ -110,8 +122,14 @@ export const getPortfolio = createServerFn({ method: 'GET' }).handler(
       latestActivatedAt: latestInvestment
         ? latestInvestment.activatedAt.toISOString()
         : null,
-      openPositionCount: openPositions.length,
-      latestPositionSymbol: openPositions.at(0)?.symbol ?? null,
+      canViewLivePositions,
+      openPositionCount: canViewLivePositions ? openPositions.length : 0,
+      latestPosition: latestPosition
+        ? {
+            ...latestPosition,
+            openedAt: latestPosition.openedAt.toISOString(),
+          }
+        : null,
     }
   },
 )
