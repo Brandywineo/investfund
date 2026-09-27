@@ -97,6 +97,7 @@ export const getPortfolio = createServerFn({ method: 'GET' }).handler(
             entryPrice: mt5Positions.entryPrice,
             currentPrice: mt5Positions.currentPrice,
             floatingProfit: mt5Positions.floatingProfit,
+            isPublic: mt5Positions.isPublic,
             openedAt: mt5Positions.openedAt,
           })
           .from(mt5Positions)
@@ -104,8 +105,12 @@ export const getPortfolio = createServerFn({ method: 'GET' }).handler(
       ])
     const canViewLivePositions =
       user.role === 'ADMIN' || Boolean(latestInvestment)
+    const visibleOpenPositions =
+      user.role === 'ADMIN'
+        ? openPositions
+        : openPositions.filter((position) => position.isPublic)
     const latestPosition = canViewLivePositions
-      ? (openPositions.at(0) ?? null)
+      ? (visibleOpenPositions.at(0) ?? null)
       : null
     return {
       user,
@@ -123,7 +128,7 @@ export const getPortfolio = createServerFn({ method: 'GET' }).handler(
         ? latestInvestment.activatedAt.toISOString()
         : null,
       canViewLivePositions,
-      openPositionCount: canViewLivePositions ? openPositions.length : 0,
+      openPositionCount: canViewLivePositions ? visibleOpenPositions.length : 0,
       latestPosition: latestPosition
         ? {
             ...latestPosition,

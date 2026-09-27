@@ -205,7 +205,7 @@ async function finalizedBlock(rpcPool: RpcPool, head: number) {
   return Math.max(0, head - 2)
 }
 
-export async function runChainWorker() {
+async function runChainWorkerBatch() {
   const db = getDb()
   const settings = await db
     .select()
@@ -1132,5 +1132,64 @@ export async function runChainWorker() {
     activeRpc: rpcSnapshot.activeIndex + 1,
     rpcEndpoints: rpcSnapshot.endpointCount,
     rpcFailovers: rpcSnapshot.failovers,
+  }
+}
+
+export async function runChainWorker() {
+  const configuredMaxBatches = Number(process.env.BSC_CATCHUP_MAX_BATCHES || 10)
+  const maxBatches = Number.isSafeInteger(configuredMaxBatches)
+    ? Math.min(50, Math.max(1, configuredMaxBatches))
+    : 10
+  const configuredMaxRuntimeMs = Number(
+    process.env.BSC_CATCHUP_MAX_RUNTIME_MS || 55_000,
+  )
+  const maxRuntimeMs = Number.isFinite(configuredMaxRuntimeMs)
+    ? Math.min(5 * 60_000, Math.max(5_000, configuredMaxRuntimeMs))
+    : 55_000
+  const startedAt = Date.now()
+  let firstBatch: Awaited<ReturnType<typeof runChainWorkerBatch>> | null = null
+  let lastBatch: Awaited<ReturnType<typeof runChainWorkerBatch>> | null = null
+  let batches = 0
+  let credited = 0
+  let swept = 0
+  let withdrawalsBroadcast = 0
+  let treasuryBroadcast = 0
+  let controlledTransfersBroadcast = 0
+  let platformTransactions = 0
+  let dustIgnored = 0
+  let rpcFailovers = 0
+
+  while (batches < maxBatches && Date.now() - startedAt < maxRuntimeMs) {
+    const batch = await runChainWorkerBatch()
+    firstBatch ??= batch
+    lastBatch = batch
+    batches += 1
+    credited += batch.credited
+    swept += batch.swept
+    withdrawalsBroadcast += batch.withdrawalsBroadcast
+    treasuryBroadcast += batch.treasuryBroadcast
+    controlledTransfersBroadcast += batch.controlledTransfersBroadcast
+    platformTransactions += batch.platformTransactions
+    dustIgnored += batch.dustIgnored
+    rpcFailovers += batch.rpcFailovers
+    if (batch.toBlock >= batch.finalized) break
+  }
+
+  if (!firstBatch || !lastBatch)
+    throw new Error('Chain worker did not complete a scanner batch')
+
+  return {
+    ...lastBatch,
+    fromBlock: firstBatch.fromBlock,
+    batches,
+    credited,
+    swept,
+    withdrawalsBroadcast,
+    treasuryBroadcast,
+    controlledTransfersBroadcast,
+    platformTransactions,
+    dustIgnored,
+    rpcFailovers,
+    runtimeMs: Date.now() - startedAt,
   }
 }

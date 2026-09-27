@@ -598,6 +598,13 @@ export const mt5Positions = pgTable(
     takeProfit: numeric('take_profit', { precision: 30, scale: 10 }),
     floatingProfit: numeric('floating_profit', { precision: 20, scale: 8 }),
     swap: numeric('swap', { precision: 20, scale: 8 }),
+    isPublic: boolean('is_public').default(true).notNull(),
+    visibilityUpdatedAt: timestamp('visibility_updated_at', {
+      withTimezone: true,
+    }),
+    visibilityUpdatedBy: uuid('visibility_updated_by').references(
+      () => users.id,
+    ),
     openedAt: timestamp('opened_at', { withTimezone: true }).notNull(),
     lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull(),
     ...timestamps,

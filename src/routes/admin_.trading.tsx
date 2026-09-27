@@ -8,6 +8,7 @@ import {
 import { currentUser } from '#/server/auth.functions'
 import {
   getAdminTradingDesk,
+  setMt5PositionVisibility,
   synchronizeMt5Now,
 } from '#/server/trading.functions'
 
@@ -26,6 +27,7 @@ function AdminTradingPage() {
   const router = useRouter()
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
+  const [visibilityBusy, setVisibilityBusy] = useState<string | null>(null)
   async function synchronize() {
     setBusy(true)
     setMessage('')
@@ -39,6 +41,25 @@ function AdminTradingPage() {
       setMessage(cause instanceof Error ? cause.message : 'MT5 sync failed')
     } finally {
       setBusy(false)
+    }
+  }
+  async function changeVisibility(ticket: string, isPublic: boolean) {
+    setVisibilityBusy(ticket)
+    setMessage('')
+    try {
+      await setMt5PositionVisibility({ data: { ticket, isPublic } })
+      setMessage(
+        isPublic
+          ? `Position #${ticket} is now public.`
+          : `Position #${ticket} is now private. Its final result will still appear in history.`,
+      )
+      await router.invalidate()
+    } catch (cause) {
+      setMessage(
+        cause instanceof Error ? cause.message : 'Visibility update failed',
+      )
+    } finally {
+      setVisibilityBusy(null)
     }
   }
   const sync = data.sync
@@ -114,13 +135,40 @@ function AdminTradingPage() {
                 key={position.ticket}
                 className="rounded-2xl bg-[#f3f6f0] p-4"
               >
-                <b>
-                  {position.symbol} · {position.side}
-                </b>
-                <p className="mt-1 text-[#6e857a]">
-                  #{position.ticket} · {position.volume} lots · entry{' '}
-                  {position.entryPrice}
-                </p>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <b>
+                      {position.symbol} · {position.side}
+                    </b>
+                    <p className="mt-1 text-[#6e857a]">
+                      #{position.ticket} · {position.volume} lots · entry{' '}
+                      {position.entryPrice}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-bold ${position.isPublic ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}
+                    >
+                      {position.isPublic ? 'PUBLIC' : 'PRIVATE'}
+                    </span>
+                    <button
+                      disabled={visibilityBusy === position.ticket}
+                      onClick={() =>
+                        void changeVisibility(
+                          position.ticket,
+                          !position.isPublic,
+                        )
+                      }
+                      className="rounded-xl bg-[#123d2d] px-4 py-2 text-xs font-bold text-white disabled:opacity-50"
+                    >
+                      {visibilityBusy === position.ticket
+                        ? 'Saving…'
+                        : position.isPublic
+                          ? 'Make private'
+                          : 'Make public'}
+                    </button>
+                  </div>
+                </div>
               </article>
             ))}
             {!data.positions.length && <p>No open MT5 positions.</p>}

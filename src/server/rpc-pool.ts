@@ -27,16 +27,17 @@ export class RpcPool {
   private failovers = 0
   private lastFailoverAt: Date | null = null
   private cooldownMs: number
+  private requestTimeoutMs: number
 
   constructor(input: {
     chainId: number
     startIndex?: number
     cooldownMs?: number
+    requestTimeoutMs?: number
     urls?: Array<string>
   }) {
     const urls = input.urls ?? configuredRpcUrls()
-    if (!urls.length)
-      throw new Error('BSC_RPC_URLS or BSC_RPC_URL is required')
+    if (!urls.length) throw new Error('BSC_RPC_URLS or BSC_RPC_URL is required')
     this.endpoints = urls.map((url) => ({
       url,
       provider: new JsonRpcProvider(url, input.chainId, {
@@ -50,6 +51,33 @@ export class RpcPool {
       1_000,
       input.cooldownMs ?? Number(process.env.BSC_RPC_COOLDOWN_MS || 15_000),
     )
+    this.requestTimeoutMs = Math.max(
+      1_000,
+      input.requestTimeoutMs ??
+        Number(process.env.BSC_RPC_TIMEOUT_MS || 10_000),
+    )
+  }
+
+  private async withTimeout<T>(operation: Promise<T>, index: number) {
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([
+        operation,
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `BSC RPC request timed out after ${this.requestTimeoutMs}ms on endpoint ${index + 1}`,
+                ),
+              ),
+            this.requestTimeoutMs,
+          )
+        }),
+      ])
+    } finally {
+      if (timeout) clearTimeout(timeout)
+    }
   }
 
   private candidateIndexes() {
@@ -83,11 +111,14 @@ export class RpcPool {
       if (endpoint.disabled || endpoint.cooldownUntil > Date.now()) continue
       attempted.add(index)
       try {
-        const result = await operation({
-          provider: endpoint.provider,
-          url: endpoint.url,
+        const result = await this.withTimeout(
+          operation({
+            provider: endpoint.provider,
+            url: endpoint.url,
+            index,
+          }),
           index,
-        })
+        )
         this.activeIndex = index
         endpoint.cooldownUntil = 0
         return result
@@ -109,8 +140,9 @@ export class RpcPool {
           !endpoint.disabled &&
           endpoint.cooldownUntil > Date.now(),
       )
-      .sort((left, right) =>
-        left.endpoint.cooldownUntil - right.endpoint.cooldownUntil,
+      .sort(
+        (left, right) =>
+          left.endpoint.cooldownUntil - right.endpoint.cooldownUntil,
       )
       .at(0)
     if (cooling) {
@@ -121,11 +153,14 @@ export class RpcPool {
         ),
       )
       try {
-        const result = await operation({
-          provider: cooling.endpoint.provider,
-          url: cooling.endpoint.url,
-          index: cooling.index,
-        })
+        const result = await this.withTimeout(
+          operation({
+            provider: cooling.endpoint.provider,
+            url: cooling.endpoint.url,
+            index: cooling.index,
+          }),
+          cooling.index,
+        )
         this.activeIndex = cooling.index
         cooling.endpoint.cooldownUntil = 0
         return result

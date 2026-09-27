@@ -1,5 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
 import { and, desc, eq } from 'drizzle-orm'
+import { z } from 'zod'
 import { getDb } from '#/db'
 import {
   investments,
@@ -66,14 +67,27 @@ export const getTradingDesk = createServerFn({ method: 'GET' }).handler(
       deskData(),
     ])
     const canViewLive = Boolean(activeInvestment) || user.role === 'ADMIN'
+    const visiblePositions =
+      user.role === 'ADMIN'
+        ? desk.positions
+        : desk.positions.filter((position) => position.isPublic)
+    const visiblePositionTickets = new Set(
+      visiblePositions.flatMap((position) =>
+        [position.ticket, position.identifier].filter(
+          (ticket): ticket is string => Boolean(ticket),
+        ),
+      ),
+    )
     return {
       hasInvestment: Boolean(activeInvestment),
       canViewLive,
-      positions: canViewLive ? desk.positions : [],
+      positions: canViewLive ? visiblePositions : [],
       orders: canViewLive ? desk.orders : [],
       openPositionHistory: canViewLive
         ? desk.positionHistory.filter(
-            (position) => position.status !== 'CLOSED',
+            (position) =>
+              position.status !== 'CLOSED' &&
+              visiblePositionTickets.has(position.positionTicket),
           )
         : [],
       completedPositions: desk.completedPositions,
@@ -95,3 +109,24 @@ export const synchronizeMt5Now = createServerFn({ method: 'POST' }).handler(
     return synchronizeMt5()
   },
 )
+
+export const setMt5PositionVisibility = createServerFn({ method: 'POST' })
+  .validator(
+    z.object({
+      ticket: z.string().trim().min(1).max(80),
+      isPublic: z.boolean(),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const administrator = await requireAdmin()
+    await getDb()
+      .update(mt5Positions)
+      .set({
+        isPublic: data.isPublic,
+        visibilityUpdatedAt: new Date(),
+        visibilityUpdatedBy: administrator.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(mt5Positions.ticket, data.ticket))
+    return { success: true }
+  })
