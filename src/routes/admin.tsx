@@ -119,6 +119,7 @@ function AdminPage() {
             <Link to="/admin/referrals">Referrals</Link>
             <Link to="/admin/trading">Trading positions</Link>
             <Link to="/admin/exits">Exit requests</Link>
+            <Link to="/admin/operations">Operations</Link>
             <Link to="/admin/users">Manage users</Link>
             <Link to="/app">Dashboard →</Link>
           </nav>

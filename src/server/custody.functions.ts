@@ -357,6 +357,7 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
       .add(balances['PLATFORM:TREASURY_IN_TRANSIT'] ?? 0)
       .add(balances['PLATFORM:BROKER_TREASURY'] ?? 0)
     const totalLiabilities = money(totalUserLiabilities).add(reserved)
+    const coverageDifference = totalAssets.minus(totalLiabilities)
     return {
       settings,
       summary: {
@@ -374,8 +375,11 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
         ),
         totalAssets: formatUsdt(totalAssets),
         totalLiabilities: formatUsdt(totalLiabilities),
-        reconciliationDifference: formatUsdt(
-          totalAssets.minus(totalLiabilities),
+        treasuryCoverageGap: formatUsdt(
+          coverageDifference.isNegative() ? coverageDifference.abs() : 0,
+        ),
+        treasurySurplus: formatUsdt(
+          coverageDifference.isPositive() ? coverageDifference : 0,
         ),
         unreconciledItems: String(
           transferRows.filter(

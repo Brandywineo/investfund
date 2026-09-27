@@ -124,6 +124,19 @@ export const notificationCategory = pgEnum('notification_category', [
   'INVESTMENT',
   'SYSTEM',
 ])
+export const chainWorkerRunStatus = pgEnum('chain_worker_run_status', [
+  'SUCCESS',
+  'FAILED',
+])
+export const operationalSeverity = pgEnum('operational_severity', [
+  'INFO',
+  'WARNING',
+  'CRITICAL',
+])
+export const operationalEventStatus = pgEnum('operational_event_status', [
+  'OPEN',
+  'RESOLVED',
+])
 
 const timestamps = {
   createdAt: timestamp('created_at', { withTimezone: true })
@@ -860,6 +873,63 @@ export const chainWatcherState = pgTable('chain_watcher_state', {
   }),
   ...timestamps,
 })
+
+export const chainWorkerRuns = pgTable(
+  'chain_worker_runs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    status: chainWorkerRunStatus('status').notNull(),
+    fromBlock: bigint('from_block', { mode: 'number' }),
+    toBlock: bigint('to_block', { mode: 'number' }),
+    headBlock: bigint('head_block', { mode: 'number' }),
+    lagBlocks: bigint('lag_blocks', { mode: 'number' }),
+    batches: integer('batches').default(0).notNull(),
+    runtimeMs: integer('runtime_ms'),
+    rpcEndpointCount: integer('rpc_endpoint_count'),
+    rpcFailovers: integer('rpc_failovers').default(0).notNull(),
+    credited: integer('credited').default(0).notNull(),
+    swept: integer('swept').default(0).notNull(),
+    error: text('error'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+    finishedAt: timestamp('finished_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index('chain_worker_runs_finished_idx').on(table.finishedAt),
+    index('chain_worker_runs_status_idx').on(table.status, table.finishedAt),
+  ],
+)
+
+export const operationalEvents = pgTable(
+  'operational_events',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    eventKey: text('event_key').notNull(),
+    component: text('component').notNull(),
+    severity: operationalSeverity('severity').notNull(),
+    status: operationalEventStatus('status').default('OPEN').notNull(),
+    title: text('title').notNull(),
+    message: text('message').notNull(),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>(),
+    openedAt: timestamp('opened_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    lastObservedAt: timestamp('last_observed_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('operational_events_key_unique').on(table.eventKey),
+    index('operational_events_status_idx').on(
+      table.status,
+      table.severity,
+      table.lastObservedAt,
+    ),
+  ],
+)
 
 export const platformWallets = pgTable(
   'platform_wallets',

@@ -141,6 +141,13 @@
       "when": 1790503195087,
       "tag": "0019_perpetual_boom_boom",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790512376730,
+      "tag": "0020_dazzling_puff_adder",
+      "breakpoints": true
     }
   ]
 }
