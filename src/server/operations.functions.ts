@@ -86,9 +86,9 @@ export const checkpointChainScanner = createServerFn({ method: 'POST' })
       chainId: settings.chainId,
       startIndex: state.activeRpcIndex,
     })
-    const liveHead = await rpcPool.run(({ provider }) =>
-      provider.getBlockNumber(),
-    )
+    const liveHead = await rpcPool
+      .run(({ provider }) => provider.getBlockNumber())
+      .finally(() => rpcPool.destroy())
     const target = Math.max(0, liveHead - data.safetyOffset)
     if (target <= state.lastScannedBlock)
       throw new Error('The scanner is already at or ahead of this checkpoint')

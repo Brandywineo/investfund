@@ -49,6 +49,10 @@ const TOKEN_ABI = [
   'function decimals() view returns (uint8)',
 ]
 const tokenInterface = new Interface(TOKEN_ABI)
+const RPC_COST = {
+  getLogs: 60,
+  nativeBlockBatch: 100,
+} as const
 
 const wait = (milliseconds: number) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -109,12 +113,14 @@ async function chunkedLogs(input: {
   )
   const groups = await mapConcurrent(ranges, input.concurrency, (range) =>
     retry(() =>
-      input.rpcPool.run(({ provider }) =>
-        provider.getLogs({
-          ...input.filter,
-          fromBlock: range.fromBlock,
-          toBlock: range.toBlock,
-        }),
+      input.rpcPool.run(
+        ({ provider }) =>
+          provider.getLogs({
+            ...input.filter,
+            fromBlock: range.fromBlock,
+            toBlock: range.toBlock,
+          }),
+        { cost: RPC_COST.getLogs },
       ),
     ),
   )
@@ -146,45 +152,48 @@ async function nativeTransfers(
     concurrency,
     (batch) =>
       retry(async () => {
-        return rpcPool.run(async ({ url }) => {
-          const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(
-              batch.map((blockNumber, index) => ({
-                jsonrpc: '2.0',
-                id: index + 1,
-                method: 'eth_getBlockByNumber',
-                params: [`0x${blockNumber.toString(16)}`, true],
-              })),
-            ),
-            signal: AbortSignal.timeout(20_000),
-          })
-          if (!response.ok) {
-            const cause = new Error(
-              `Native transaction scan returned HTTP ${response.status}`,
-            ) as Error & { status: number }
-            cause.status = response.status
-            throw cause
-          }
-          const payload = (await response.json()) as Array<{
-            result?: RpcBlock
-            error?: { code?: number; message?: string }
-          }>
-          if (!Array.isArray(payload))
-            throw new Error(
-              'RPC provider does not support batched native scans',
-            )
-          const failure = payload.find((item) => item.error)
-          if (failure?.error) {
-            const cause = new Error(
-              failure.error.message || 'Native transaction scan failed',
-            ) as Error & { code?: number }
-            cause.code = failure.error.code
-            throw cause
-          }
-          return payload.flatMap((item) => (item.result ? [item.result] : []))
-        })
+        return rpcPool.run(
+          async ({ url }) => {
+            const response = await fetch(url, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(
+                batch.map((blockNumber, index) => ({
+                  jsonrpc: '2.0',
+                  id: index + 1,
+                  method: 'eth_getBlockByNumber',
+                  params: [`0x${blockNumber.toString(16)}`, true],
+                })),
+              ),
+              signal: AbortSignal.timeout(20_000),
+            })
+            if (!response.ok) {
+              const cause = new Error(
+                `Native transaction scan returned HTTP ${response.status}`,
+              ) as Error & { status: number }
+              cause.status = response.status
+              throw cause
+            }
+            const payload = (await response.json()) as Array<{
+              result?: RpcBlock
+              error?: { code?: number; message?: string }
+            }>
+            if (!Array.isArray(payload))
+              throw new Error(
+                'RPC provider does not support batched native scans',
+              )
+            const failure = payload.find((item) => item.error)
+            if (failure?.error) {
+              const cause = new Error(
+                failure.error.message || 'Native transaction scan failed',
+              ) as Error & { code?: number }
+              cause.code = failure.error.code
+              throw cause
+            }
+            return payload.flatMap((item) => (item.result ? [item.result] : []))
+          },
+          { cost: RPC_COST.nativeBlockBatch },
+        )
       }),
   )
   return groups.flat()
@@ -229,293 +238,570 @@ async function runChainWorkerBatch() {
     chainId: settings.chainId,
     startIndex: state?.activeRpcIndex ?? 0,
   })
-  const network = await rpcPool.run(({ provider }) => provider.getNetwork())
-  if (Number(network.chainId) !== settings.chainId)
-    throw new Error('RPC chain ID does not match custody settings')
-  const head = await rpcPool.run(({ provider }) => provider.getBlockNumber())
-  const finalized = await finalizedBlock(rpcPool, head)
-  const configuredStart = Number(process.env.BSC_START_BLOCK || 0)
-  const configuredScanBlocks = Number(process.env.BSC_SCAN_BLOCKS || 50)
-  const scanBlocks = Number.isSafeInteger(configuredScanBlocks)
-    ? Math.min(1_000, Math.max(1, configuredScanBlocks))
-    : 50
-  const configuredLogChunkBlocks = Number(
-    process.env.BSC_LOG_CHUNK_BLOCKS || 10,
-  )
-  const logChunkBlocks = Number.isSafeInteger(configuredLogChunkBlocks)
-    ? Math.min(100, Math.max(1, configuredLogChunkBlocks))
-    : 10
-  const configuredRpcConcurrency = Number(process.env.BSC_RPC_CONCURRENCY || 4)
-  const rpcConcurrency = Number.isSafeInteger(configuredRpcConcurrency)
-    ? Math.min(10, Math.max(1, configuredRpcConcurrency))
-    : 4
-  const configuredAddressBatch = Number(process.env.BSC_ADDRESS_BATCH_SIZE || 1)
-  const addressBatchSize = Number.isSafeInteger(configuredAddressBatch)
-    ? Math.min(50, Math.max(1, configuredAddressBatch))
-    : 1
-  const fromBlock = state
-    ? state.lastScannedBlock + 1
-    : configuredStart > 0
-      ? configuredStart
-      : Math.max(0, head - 20)
-  // Public RPC endpoints commonly impose stricter eth_getLogs limits than
-  // dedicated providers. A private provider can opt into a larger window.
-  const toBlock = Math.min(head, fromBlock + scanBlocks - 1)
-  const addressRows = await db
-    .select()
-    .from(walletAddresses)
-    .where(eq(walletAddresses.status, 'ACTIVE'))
-  const addressMap = new Map(
-    addressRows.map((row) => [row.address.toLowerCase(), row]),
-  )
-  const decimals = Number(
-    await rpcPool.run(({ provider }) =>
-      new Contract(
-        settings.tokenContractAddress!,
-        TOKEN_ABI,
-        provider,
-      ).decimals(),
-    ),
-  )
-  const tokenBalanceOf = (address: string) =>
-    rpcPool.run(
-      ({ provider }) =>
+  try {
+    const network = await rpcPool.run(({ provider }) => provider.getNetwork())
+    if (Number(network.chainId) !== settings.chainId)
+      throw new Error('RPC chain ID does not match custody settings')
+    const head = await rpcPool.run(({ provider }) => provider.getBlockNumber())
+    const finalized = Math.min(head, await finalizedBlock(rpcPool, head))
+    const configuredStart = Number(process.env.BSC_START_BLOCK || 0)
+    const configuredScanBlocks = Number(process.env.BSC_SCAN_BLOCKS || 50)
+    const scanBlocks = Number.isSafeInteger(configuredScanBlocks)
+      ? Math.min(1_000, Math.max(1, configuredScanBlocks))
+      : 50
+    const configuredLogChunkBlocks = Number(
+      process.env.BSC_LOG_CHUNK_BLOCKS || 10,
+    )
+    const logChunkBlocks = Number.isSafeInteger(configuredLogChunkBlocks)
+      ? Math.min(100, Math.max(1, configuredLogChunkBlocks))
+      : 10
+    const configuredRpcConcurrency = Number(
+      process.env.BSC_RPC_CONCURRENCY || 4,
+    )
+    const rpcConcurrency = Number.isSafeInteger(configuredRpcConcurrency)
+      ? Math.min(10, Math.max(1, configuredRpcConcurrency))
+      : 4
+    const configuredAddressBatch = Number(
+      process.env.BSC_ADDRESS_BATCH_SIZE || 1,
+    )
+    const addressBatchSize = Number.isSafeInteger(configuredAddressBatch)
+      ? Math.min(50, Math.max(1, configuredAddressBatch))
+      : 1
+    const fromBlock = state
+      ? state.lastScannedBlock + 1
+      : configuredStart > 0
+        ? configuredStart
+        : Math.max(0, head - 20)
+    // Public RPC endpoints commonly impose stricter eth_getLogs limits than
+    // dedicated providers. A private provider can opt into a larger window.
+    const toBlock = Math.min(head, fromBlock + scanBlocks - 1)
+    const addressRows = await db
+      .select()
+      .from(walletAddresses)
+      .where(eq(walletAddresses.status, 'ACTIVE'))
+    const addressMap = new Map(
+      addressRows.map((row) => [row.address.toLowerCase(), row]),
+    )
+    const decimals = Number(
+      await rpcPool.run(({ provider }) =>
         new Contract(
           settings.tokenContractAddress!,
           TOKEN_ABI,
           provider,
-        ).balanceOf(address) as Promise<bigint>,
+        ).decimals(),
+      ),
     )
-  const nativeBalanceOf = (address: string) =>
-    rpcPool.run(({ provider }) => provider.getBalance(address))
-  const transactionReceipt = (txHash: string) =>
-    rpcPool.run(({ provider }) => provider.getTransactionReceipt(txHash))
-  const transactionByHash = (txHash: string) =>
-    rpcPool.run(({ provider }) => provider.getTransaction(txHash))
-  const settleTreasuryAttempts = async (
-    transferId: string,
-    currentTxHash: string,
-  ) => {
-    const attempts = await db
-      .select({
-        id: treasuryTransactionAttempts.id,
-        txHash: treasuryTransactionAttempts.txHash,
-      })
-      .from(treasuryTransactionAttempts)
-      .where(eq(treasuryTransactionAttempts.treasuryTransferId, transferId))
-    const hashes = Array.from(
-      new Set([currentTxHash, ...attempts.map((attempt) => attempt.txHash)]),
-    )
-    for (const txHash of hashes) {
-      const receipt = await transactionReceipt(txHash)
-      if (receipt?.status !== 1) continue
-      await advanceTreasuryStatus(
-        transferId,
-        'BROADCAST',
-        'CONFIRMED',
-        undefined,
+    const tokenBalanceOf = (address: string) =>
+      rpcPool.run(
+        ({ provider }) =>
+          new Contract(
+            settings.tokenContractAddress!,
+            TOKEN_ABI,
+            provider,
+          ).balanceOf(address) as Promise<bigint>,
       )
-      await db
-        .update(treasuryTransactionAttempts)
-        .set({
-          status: 'CONFIRMED',
-          confirmedAt: new Date(),
-          updatedAt: new Date(),
+    const nativeBalanceOf = (address: string) =>
+      rpcPool.run(({ provider }) => provider.getBalance(address))
+    const transactionReceipt = (txHash: string) =>
+      rpcPool.run(({ provider }) => provider.getTransactionReceipt(txHash))
+    const transactionByHash = (txHash: string) =>
+      rpcPool.run(({ provider }) => provider.getTransaction(txHash))
+    const settleTreasuryAttempts = async (
+      transferId: string,
+      currentTxHash: string,
+    ) => {
+      const attempts = await db
+        .select({
+          id: treasuryTransactionAttempts.id,
+          txHash: treasuryTransactionAttempts.txHash,
         })
-        .where(eq(treasuryTransactionAttempts.txHash, txHash))
-      return true
+        .from(treasuryTransactionAttempts)
+        .where(eq(treasuryTransactionAttempts.treasuryTransferId, transferId))
+      const hashes = Array.from(
+        new Set([currentTxHash, ...attempts.map((attempt) => attempt.txHash)]),
+      )
+      for (const txHash of hashes) {
+        const receipt = await transactionReceipt(txHash)
+        if (receipt?.status !== 1) continue
+        await advanceTreasuryStatus(
+          transferId,
+          'BROADCAST',
+          'CONFIRMED',
+          undefined,
+        )
+        await db
+          .update(treasuryTransactionAttempts)
+          .set({
+            status: 'CONFIRMED',
+            confirmedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(treasuryTransactionAttempts.txHash, txHash))
+        return true
+      }
+      return false
     }
-    return false
-  }
-  let credited = 0
+    let credited = 0
 
-  const signerWallets = await getSignerPlatformWallets()
-  const signerWalletDefinitions = [
-    {
-      role: 'HOT_WITHDRAWAL' as const,
-      address: getAddress(signerWallets.hot.address),
-      derivationPath: signerWallets.hot.derivationPath,
-    },
-    {
-      role: 'SWEEP_GAS' as const,
-      address: getAddress(signerWallets.gas.address),
-      derivationPath: signerWallets.gas.derivationPath,
-    },
-  ]
-  for (const definition of signerWalletDefinitions) {
-    await db
-      .insert(platformWallets)
-      .values(definition)
-      .onConflictDoUpdate({
-        target: platformWallets.role,
-        set: {
-          address: definition.address,
-          derivationPath: definition.derivationPath,
-          updatedAt: new Date(),
-        },
-      })
-  }
-  let managedWalletRows = await db.select().from(platformWallets)
-  await Promise.all(
-    managedWalletRows.map(async (wallet) => {
-      const [tokenBalance, nativeBalance] = await Promise.all([
-        tokenBalanceOf(wallet.address),
-        nativeBalanceOf(wallet.address),
-      ])
+    const signerWallets = await getSignerPlatformWallets()
+    const signerWalletDefinitions = [
+      {
+        role: 'HOT_WITHDRAWAL' as const,
+        address: getAddress(signerWallets.hot.address),
+        derivationPath: signerWallets.hot.derivationPath,
+      },
+      {
+        role: 'SWEEP_GAS' as const,
+        address: getAddress(signerWallets.gas.address),
+        derivationPath: signerWallets.gas.derivationPath,
+      },
+    ]
+    for (const definition of signerWalletDefinitions) {
       await db
-        .update(platformWallets)
-        .set({
-          tokenBalance: formatUnits(tokenBalance, decimals),
-          nativeBalance: formatUnits(nativeBalance, 18),
-          balanceCheckedAt: new Date(),
-          updatedAt: new Date(),
+        .insert(platformWallets)
+        .values(definition)
+        .onConflictDoUpdate({
+          target: platformWallets.role,
+          set: {
+            address: definition.address,
+            derivationPath: definition.derivationPath,
+            updatedAt: new Date(),
+          },
         })
-        .where(eq(platformWallets.id, wallet.id))
-    }),
-  )
-  managedWalletRows = await db.select().from(platformWallets)
+    }
+    let managedWalletRows = await db.select().from(platformWallets)
+    const configuredMaintenanceInterval = Number(
+      process.env.BSC_MAINTENANCE_INTERVAL_MS || 60_000,
+    )
+    const maintenanceIntervalMs = Number.isFinite(configuredMaintenanceInterval)
+      ? Math.max(10_000, configuredMaintenanceInterval)
+      : 60_000
+    const maintenanceBefore = Date.now() - maintenanceIntervalMs
+    const maintenanceDue = managedWalletRows.some(
+      (wallet) =>
+        !wallet.balanceCheckedAt ||
+        wallet.balanceCheckedAt.getTime() < maintenanceBefore,
+    )
+    if (maintenanceDue) {
+      await Promise.all(
+        managedWalletRows.map(async (wallet) => {
+          const [tokenBalance, nativeBalance] = await Promise.all([
+            tokenBalanceOf(wallet.address),
+            nativeBalanceOf(wallet.address),
+          ])
+          await db
+            .update(platformWallets)
+            .set({
+              tokenBalance: formatUnits(tokenBalance, decimals),
+              nativeBalance: formatUnits(nativeBalance, 18),
+              balanceCheckedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(eq(platformWallets.id, wallet.id))
+        }),
+      )
+    }
+    managedWalletRows = await db.select().from(platformWallets)
 
-  // Receipt settlement is intentionally independent from historical scanning.
-  // A provider backlog must never prevent the platform from recognizing a
-  // confirmed or reverted transaction that it already broadcast.
-  const droppedBefore = Date.now() - 2 * 60_000
-  const earlyBroadcastWithdrawals = await db
-    .select({
-      id: withdrawals.id,
-      txHash: withdrawals.txHash,
-      broadcastAt: withdrawals.broadcastAt,
-    })
-    .from(withdrawals)
-    .where(eq(withdrawals.status, 'BROADCAST'))
-  for (const withdrawal of earlyBroadcastWithdrawals) {
-    if (!withdrawal.txHash) continue
-    const receipt = await transactionReceipt(withdrawal.txHash)
-    if (receipt)
-      await settleBroadcastWithdrawal(withdrawal.id, receipt.status === 1)
-    else if (
-      withdrawal.broadcastAt &&
-      withdrawal.broadcastAt.getTime() < droppedBefore &&
-      !(await transactionByHash(withdrawal.txHash))
-    )
-      await requestSignedTransactionRebroadcast('WITHDRAWAL', withdrawal.id)
-  }
-  const earlyBroadcastTreasury = await db
-    .select({
-      id: treasuryTransfers.id,
-      txHash: treasuryTransfers.txHash,
-      broadcastAt: treasuryTransfers.broadcastAt,
-    })
-    .from(treasuryTransfers)
-    .where(eq(treasuryTransfers.status, 'BROADCAST'))
-  for (const transfer of earlyBroadcastTreasury) {
-    if (!transfer.txHash) continue
-    if (await settleTreasuryAttempts(transfer.id, transfer.txHash)) continue
-    const receipt = await transactionReceipt(transfer.txHash)
-    if (receipt?.status === 0) await failBroadcastTreasuryTransfer(transfer.id)
-    else if (
-      transfer.broadcastAt &&
-      transfer.broadcastAt.getTime() < droppedBefore &&
-      !(await transactionByHash(transfer.txHash))
-    )
-      await requestSignedTransactionRebroadcast('TREASURY', transfer.id)
-  }
-  const earlyBroadcastControlled = await db
-    .select({
-      id: controlledWalletTransfers.id,
-      txHash: controlledWalletTransfers.txHash,
-      broadcastAt: controlledWalletTransfers.broadcastAt,
-    })
-    .from(controlledWalletTransfers)
-    .where(eq(controlledWalletTransfers.status, 'BROADCAST'))
-  for (const transfer of earlyBroadcastControlled) {
-    if (!transfer.txHash) continue
-    const receipt = await transactionReceipt(transfer.txHash)
-    if (receipt)
-      await settleControlledWalletTransfer(transfer.id, receipt.status === 1)
-    else if (
-      transfer.broadcastAt &&
-      transfer.broadcastAt.getTime() < droppedBefore &&
-      !(await transactionByHash(transfer.txHash))
-    )
-      await requestSignedTransactionRebroadcast('CONTROLLED', transfer.id)
-  }
+    // Receipt settlement is intentionally independent from historical scanning.
+    // A provider backlog must never prevent the platform from recognizing a
+    // confirmed or reverted transaction that it already broadcast.
+    const droppedBefore = Date.now() - 2 * 60_000
+    if (maintenanceDue) {
+      const earlyBroadcastWithdrawals = await db
+        .select({
+          id: withdrawals.id,
+          txHash: withdrawals.txHash,
+          broadcastAt: withdrawals.broadcastAt,
+        })
+        .from(withdrawals)
+        .where(eq(withdrawals.status, 'BROADCAST'))
+      for (const withdrawal of earlyBroadcastWithdrawals) {
+        if (!withdrawal.txHash) continue
+        const receipt = await transactionReceipt(withdrawal.txHash)
+        if (receipt)
+          await settleBroadcastWithdrawal(withdrawal.id, receipt.status === 1)
+        else if (
+          withdrawal.broadcastAt &&
+          withdrawal.broadcastAt.getTime() < droppedBefore &&
+          !(await transactionByHash(withdrawal.txHash))
+        )
+          await requestSignedTransactionRebroadcast('WITHDRAWAL', withdrawal.id)
+      }
+      const earlyBroadcastTreasury = await db
+        .select({
+          id: treasuryTransfers.id,
+          txHash: treasuryTransfers.txHash,
+          broadcastAt: treasuryTransfers.broadcastAt,
+        })
+        .from(treasuryTransfers)
+        .where(eq(treasuryTransfers.status, 'BROADCAST'))
+      for (const transfer of earlyBroadcastTreasury) {
+        if (!transfer.txHash) continue
+        if (await settleTreasuryAttempts(transfer.id, transfer.txHash)) continue
+        const receipt = await transactionReceipt(transfer.txHash)
+        if (receipt?.status === 0)
+          await failBroadcastTreasuryTransfer(transfer.id)
+        else if (
+          transfer.broadcastAt &&
+          transfer.broadcastAt.getTime() < droppedBefore &&
+          !(await transactionByHash(transfer.txHash))
+        )
+          await requestSignedTransactionRebroadcast('TREASURY', transfer.id)
+      }
+      const earlyBroadcastControlled = await db
+        .select({
+          id: controlledWalletTransfers.id,
+          txHash: controlledWalletTransfers.txHash,
+          broadcastAt: controlledWalletTransfers.broadcastAt,
+        })
+        .from(controlledWalletTransfers)
+        .where(eq(controlledWalletTransfers.status, 'BROADCAST'))
+      for (const transfer of earlyBroadcastControlled) {
+        if (!transfer.txHash) continue
+        const receipt = await transactionReceipt(transfer.txHash)
+        if (receipt)
+          await settleControlledWalletTransfer(
+            transfer.id,
+            receipt.status === 1,
+          )
+        else if (
+          transfer.broadcastAt &&
+          transfer.broadcastAt.getTime() < droppedBefore &&
+          !(await transactionByHash(transfer.txHash))
+        )
+          await requestSignedTransactionRebroadcast('CONTROLLED', transfer.id)
+      }
+    }
 
-  const [
-    knownSweeps,
-    knownWithdrawals,
-    knownTreasury,
-    knownControlledTransfers,
-    recordedGasSweeps,
-  ] = await Promise.all([
-    db
-      .select({
-        id: walletSweeps.id,
-        sweepTxHash: walletSweeps.sweepTxHash,
-        gasTxHash: walletSweeps.gasTxHash,
+    const [
+      knownSweeps,
+      knownWithdrawals,
+      knownTreasury,
+      knownControlledTransfers,
+      recordedGasSweeps,
+    ] = await Promise.all([
+      db
+        .select({
+          id: walletSweeps.id,
+          sweepTxHash: walletSweeps.sweepTxHash,
+          gasTxHash: walletSweeps.gasTxHash,
+        })
+        .from(walletSweeps),
+      db
+        .select({ id: withdrawals.id, txHash: withdrawals.txHash })
+        .from(withdrawals),
+      db
+        .select({
+          id: treasuryTransfers.id,
+          txHash: treasuryTransfers.txHash,
+          purpose: treasuryTransfers.purpose,
+          direction: treasuryTransfers.direction,
+        })
+        .from(treasuryTransfers),
+      db
+        .select({
+          id: controlledWalletTransfers.id,
+          txHash: controlledWalletTransfers.txHash,
+        })
+        .from(controlledWalletTransfers),
+      db
+        .select({ relatedId: platformWalletTransactions.relatedId })
+        .from(platformWalletTransactions)
+        .where(
+          and(
+            eq(platformWalletTransactions.asset, 'BNB'),
+            eq(platformWalletTransactions.classification, 'SWEEP_GAS'),
+          ),
+        ),
+    ])
+    const sweepByHash = new Map(
+      knownSweeps
+        .filter((row) => row.sweepTxHash)
+        .map((row) => [row.sweepTxHash!.toLowerCase(), row]),
+    )
+    const withdrawalByHash = new Map(
+      knownWithdrawals
+        .filter((row) => row.txHash)
+        .map((row) => [row.txHash!.toLowerCase(), row]),
+    )
+    const treasuryByHash = new Map(
+      knownTreasury
+        .filter((row) => row.txHash)
+        .map((row) => [row.txHash!.toLowerCase(), row]),
+    )
+    const controlledTransferByHash = new Map(
+      knownControlledTransfers
+        .filter((row) => row.txHash)
+        .map((row) => [row.txHash!.toLowerCase(), row]),
+    )
+    let platformTransactions = 0
+    let dustIgnored = 0
+
+    if (fromBlock <= toBlock) {
+      const platformWalletByAddress = new Map(
+        managedWalletRows.map((wallet) => [
+          wallet.address.toLowerCase(),
+          wallet,
+        ]),
+      )
+      const platformWalletTopics = managedWalletRows.map((wallet) =>
+        zeroPadValue(getAddress(wallet.address), 32),
+      )
+      if (platformWalletTopics.length > 0) {
+        for (const direction of ['INCOMING', 'OUTGOING'] as const) {
+          const logs = await chunkedLogs({
+            rpcPool,
+            filter: {
+              address: settings.tokenContractAddress,
+              topics:
+                direction === 'INCOMING'
+                  ? [TRANSFER_TOPIC, null, platformWalletTopics]
+                  : [TRANSFER_TOPIC, platformWalletTopics],
+            },
+            fromBlock,
+            toBlock,
+            chunkBlocks: logChunkBlocks,
+            concurrency: rpcConcurrency,
+          })
+          for (const log of logs) {
+            const parsed = tokenInterface.parseLog(log)
+            if (!parsed) continue
+            const rawValue = parsed.args.value as bigint
+            if (rawValue <= 0n) continue
+            const walletAddress = String(
+              direction === 'INCOMING' ? parsed.args.to : parsed.args.from,
+            ).toLowerCase()
+            const wallet = platformWalletByAddress.get(walletAddress)
+            if (!wallet) continue
+            const txHash = log.transactionHash.toLowerCase()
+            const knownSweep = sweepByHash.get(txHash)
+            const knownWithdrawal = withdrawalByHash.get(txHash)
+            const knownTransfer = treasuryByHash.get(txHash)
+            const relation = knownSweep
+              ? {
+                  classification: 'USER_SWEEP',
+                  relatedType: 'wallet_sweep',
+                  relatedId: knownSweep.id,
+                }
+              : knownWithdrawal
+                ? {
+                    classification: 'USER_WITHDRAWAL',
+                    relatedType: 'withdrawal',
+                    relatedId: knownWithdrawal.id,
+                  }
+                : knownTransfer
+                  ? {
+                      classification:
+                        knownTransfer.direction === 'RETURN'
+                          ? 'MT5_RETURN'
+                          : knownTransfer.purpose,
+                      relatedType: 'treasury_transfer',
+                      relatedId: knownTransfer.id,
+                    }
+                  : {
+                      classification:
+                        direction === 'INCOMING' &&
+                        classifyDepositTransfer({
+                          rawValue,
+                          tokenDecimals: decimals,
+                          minimumCreditedAmount:
+                            settings.minimumCreditedDepositAmount,
+                        }) === 'DUST'
+                          ? 'DUST'
+                          : direction === 'INCOMING' &&
+                              wallet.role === 'SWEEP_GAS'
+                            ? 'GAS_TOP_UP'
+                            : null,
+                      relatedType: null,
+                      relatedId: null,
+                    }
+            const inserted = await db
+              .insert(platformWalletTransactions)
+              .values({
+                platformWalletId: wallet.id,
+                eventKey: `${settings.chainId}:${wallet.role}:${txHash}:${log.index}`,
+                chainId: settings.chainId,
+                txHash: log.transactionHash,
+                logIndex: log.index,
+                blockNumber: log.blockNumber,
+                direction,
+                asset: 'USDT',
+                amount: formatUnits(rawValue, decimals),
+                fromAddress: String(parsed.args.from),
+                toAddress: String(parsed.args.to),
+                status: log.blockNumber <= finalized ? 'CONFIRMED' : 'PENDING',
+                confirmations: head - log.blockNumber + 1,
+                ...relation,
+              })
+              .onConflictDoNothing()
+              .returning({ id: platformWalletTransactions.id })
+              .then((rows) => rows.at(0))
+            if (inserted) platformTransactions += 1
+            if (inserted && relation.classification === 'DUST') dustIgnored += 1
+          }
+        }
+      }
+
+      {
+        const nativeBlocks = await nativeTransfers(
+          rpcPool,
+          fromBlock,
+          toBlock,
+          rpcConcurrency,
+        )
+        for (const block of nativeBlocks) {
+          const blockNumber = block.number ? Number(BigInt(block.number)) : null
+          for (const transaction of block.transactions ?? []) {
+            if (!transaction.to || BigInt(transaction.value) <= 0n) continue
+            const fromWallet = managedWalletRows.find(
+              (wallet) =>
+                wallet.address.toLowerCase() === transaction.from.toLowerCase(),
+            )
+            const toWallet = managedWalletRows.find(
+              (wallet) =>
+                wallet.address.toLowerCase() === transaction.to!.toLowerCase(),
+            )
+            for (const match of [
+              fromWallet
+                ? { wallet: fromWallet, direction: 'OUTGOING' as const }
+                : null,
+              toWallet
+                ? { wallet: toWallet, direction: 'INCOMING' as const }
+                : null,
+            ].filter((item): item is NonNullable<typeof item> =>
+              Boolean(item),
+            )) {
+              const knownGasSweep = knownSweeps.find(
+                (sweep) =>
+                  sweep.gasTxHash?.toLowerCase() ===
+                  transaction.hash.toLowerCase(),
+              )
+              const knownControlledTransfer = controlledTransferByHash.get(
+                transaction.hash.toLowerCase(),
+              )
+              const classification = knownGasSweep
+                ? 'SWEEP_GAS'
+                : knownControlledTransfer
+                  ? 'CONTROLLED_WALLET_TRANSFER'
+                  : match.direction === 'INCOMING' &&
+                      match.wallet.role === 'SWEEP_GAS'
+                    ? 'GAS_TOP_UP'
+                    : null
+              const inserted = await db
+                .insert(platformWalletTransactions)
+                .values({
+                  platformWalletId: match.wallet.id,
+                  eventKey: `${settings.chainId}:${match.wallet.role}:${transaction.hash.toLowerCase()}:native`,
+                  chainId: settings.chainId,
+                  txHash: transaction.hash,
+                  blockNumber,
+                  direction: match.direction,
+                  asset: 'BNB',
+                  amount: formatUnits(BigInt(transaction.value), 18),
+                  fromAddress: transaction.from,
+                  toAddress: transaction.to,
+                  status:
+                    blockNumber !== null && blockNumber <= finalized
+                      ? 'CONFIRMED'
+                      : 'PENDING',
+                  confirmations:
+                    blockNumber === null ? 0 : head - blockNumber + 1,
+                  classification,
+                  relatedType: knownGasSweep
+                    ? 'wallet_sweep'
+                    : knownControlledTransfer
+                      ? 'controlled_wallet_transfer'
+                      : null,
+                  relatedId:
+                    knownGasSweep?.id ?? knownControlledTransfer?.id ?? null,
+                })
+                .onConflictDoNothing()
+                .returning({ id: platformWalletTransactions.id })
+                .then((rows) => rows.at(0))
+              if (inserted) platformTransactions += 1
+            }
+          }
+        }
+      }
+    }
+
+    const gasWalletRow = managedWalletRows.find(
+      (wallet) => wallet.role === 'SWEEP_GAS',
+    )
+    const recordedGasSweepIds = new Set(
+      recordedGasSweeps.flatMap((row) =>
+        row.relatedId ? [row.relatedId] : [],
+      ),
+    )
+    if (gasWalletRow && maintenanceDue) {
+      for (const sweep of knownSweeps.filter(
+        (row) => row.gasTxHash && !recordedGasSweepIds.has(row.id),
+      )) {
+        const transaction = await transactionByHash(sweep.gasTxHash!).catch(
+          () => null,
+        )
+        if (!transaction || transaction.value <= 0n || !transaction.to) continue
+        const receipt = await transactionReceipt(sweep.gasTxHash!).catch(
+          () => null,
+        )
+        await db
+          .insert(platformWalletTransactions)
+          .values({
+            platformWalletId: gasWalletRow.id,
+            eventKey: `${settings.chainId}:SWEEP_GAS:${sweep.gasTxHash!.toLowerCase()}:native`,
+            chainId: settings.chainId,
+            txHash: sweep.gasTxHash!,
+            blockNumber: receipt?.blockNumber,
+            direction: 'OUTGOING',
+            asset: 'BNB',
+            amount: formatUnits(transaction.value, 18),
+            fromAddress: transaction.from,
+            toAddress: transaction.to,
+            status: receipt
+              ? receipt.status === 1
+                ? 'CONFIRMED'
+                : 'FAILED'
+              : 'PENDING',
+            confirmations: receipt ? head - receipt.blockNumber + 1 : 0,
+            classification: 'SWEEP_GAS',
+            relatedType: 'wallet_sweep',
+            relatedId: sweep.id,
+          })
+          .onConflictDoNothing()
+      }
+    }
+
+    await db
+      .update(platformWalletTransactions)
+      .set({
+        status: 'CONFIRMED',
+        confirmations: sql`${head} - ${platformWalletTransactions.blockNumber} + 1`,
+        updatedAt: new Date(),
       })
-      .from(walletSweeps),
-    db
-      .select({ id: withdrawals.id, txHash: withdrawals.txHash })
-      .from(withdrawals),
-    db
-      .select({
-        id: treasuryTransfers.id,
-        txHash: treasuryTransfers.txHash,
-        purpose: treasuryTransfers.purpose,
-        direction: treasuryTransfers.direction,
-      })
-      .from(treasuryTransfers),
-    db
-      .select({
-        id: controlledWalletTransfers.id,
-        txHash: controlledWalletTransfers.txHash,
-      })
-      .from(controlledWalletTransfers),
-    db
-      .select({ relatedId: platformWalletTransactions.relatedId })
-      .from(platformWalletTransactions)
       .where(
         and(
-          eq(platformWalletTransactions.asset, 'BNB'),
-          eq(platformWalletTransactions.classification, 'SWEEP_GAS'),
+          eq(platformWalletTransactions.chainId, settings.chainId),
+          eq(platformWalletTransactions.status, 'PENDING'),
+          sql`${platformWalletTransactions.blockNumber} is not null and ${platformWalletTransactions.blockNumber} <= ${finalized}`,
         ),
-      ),
-  ])
-  const sweepByHash = new Map(
-    knownSweeps
-      .filter((row) => row.sweepTxHash)
-      .map((row) => [row.sweepTxHash!.toLowerCase(), row]),
-  )
-  const withdrawalByHash = new Map(
-    knownWithdrawals
-      .filter((row) => row.txHash)
-      .map((row) => [row.txHash!.toLowerCase(), row]),
-  )
-  const treasuryByHash = new Map(
-    knownTreasury
-      .filter((row) => row.txHash)
-      .map((row) => [row.txHash!.toLowerCase(), row]),
-  )
-  const controlledTransferByHash = new Map(
-    knownControlledTransfers
-      .filter((row) => row.txHash)
-      .map((row) => [row.txHash!.toLowerCase(), row]),
-  )
-  let platformTransactions = 0
-  let dustIgnored = 0
+      )
 
-  if (fromBlock <= toBlock) {
-    for (const wallet of managedWalletRows) {
-      for (const direction of ['INCOMING', 'OUTGOING'] as const) {
-        const walletTopic = zeroPadValue(getAddress(wallet.address), 32)
+    if (fromBlock <= toBlock && addressRows.length > 0) {
+      // Some public BSC nodes reject OR filters containing multiple recipient
+      // topics. Query one address at a time by default; private RPCs can opt in
+      // to larger batches.
+      for (const addressChunk of chunks(addressRows, addressBatchSize)) {
+        const recipientTopics = addressChunk.map((row) =>
+          zeroPadValue(getAddress(row.address), 32),
+        )
+        const recipientFilter =
+          recipientTopics.length === 1 ? recipientTopics[0] : recipientTopics
         const logs = await chunkedLogs({
           rpcPool,
           filter: {
             address: settings.tokenContractAddress,
-            topics:
-              direction === 'INCOMING'
-                ? [TRANSFER_TOPIC, null, walletTopic]
-                : [TRANSFER_TOPIC, walletTopic],
+            topics: [TRANSFER_TOPIC, null, recipientFilter],
           },
           fromBlock,
           toBlock,
@@ -526,586 +812,299 @@ async function runChainWorkerBatch() {
           const parsed = tokenInterface.parseLog(log)
           if (!parsed) continue
           const rawValue = parsed.args.value as bigint
-          if (rawValue <= 0n) continue
-          const txHash = log.transactionHash.toLowerCase()
-          const knownSweep = sweepByHash.get(txHash)
-          const knownWithdrawal = withdrawalByHash.get(txHash)
-          const knownTransfer = treasuryByHash.get(txHash)
-          const relation = knownSweep
-            ? {
-                classification: 'USER_SWEEP',
-                relatedType: 'wallet_sweep',
-                relatedId: knownSweep.id,
-              }
-            : knownWithdrawal
-              ? {
-                  classification: 'USER_WITHDRAWAL',
-                  relatedType: 'withdrawal',
-                  relatedId: knownWithdrawal.id,
-                }
-              : knownTransfer
-                ? {
-                    classification:
-                      knownTransfer.direction === 'RETURN'
-                        ? 'MT5_RETURN'
-                        : knownTransfer.purpose,
-                    relatedType: 'treasury_transfer',
-                    relatedId: knownTransfer.id,
-                  }
-                : {
-                    classification:
-                      direction === 'INCOMING' &&
-                      classifyDepositTransfer({
-                        rawValue,
-                        tokenDecimals: decimals,
-                        minimumCreditedAmount:
-                          settings.minimumCreditedDepositAmount,
-                      }) === 'DUST'
-                        ? 'DUST'
-                        : direction === 'INCOMING' &&
-                            wallet.role === 'SWEEP_GAS'
-                          ? 'GAS_TOP_UP'
-                          : null,
-                    relatedType: null,
-                    relatedId: null,
-                  }
+          const disposition = classifyDepositTransfer({
+            rawValue,
+            tokenDecimals: decimals,
+            minimumCreditedAmount: settings.minimumCreditedDepositAmount,
+          })
+          if (disposition === 'ZERO_VALUE') continue
+          const recipient = String(parsed.args.to).toLowerCase()
+          const walletAddress = addressMap.get(recipient)
+          if (!walletAddress) continue
+          const amount = formatUnits(rawValue, decimals)
           const inserted = await db
-            .insert(platformWalletTransactions)
+            .insert(deposits)
             .values({
-              platformWalletId: wallet.id,
-              eventKey: `${settings.chainId}:${wallet.role}:${txHash}:${log.index}`,
-              chainId: settings.chainId,
+              userId: walletAddress.userId,
+              walletAddressId: walletAddress.id,
+              amount,
+              network: settings.network,
               txHash: log.transactionHash,
-              logIndex: log.index,
+              chainId: settings.chainId,
+              tokenContractAddress: settings.tokenContractAddress.toLowerCase(),
+              senderAddress: String(parsed.args.from),
               blockNumber: log.blockNumber,
-              direction,
-              asset: 'USDT',
-              amount: formatUnits(rawValue, decimals),
-              fromAddress: String(parsed.args.from),
-              toAddress: String(parsed.args.to),
-              status: log.blockNumber <= finalized ? 'CONFIRMED' : 'PENDING',
+              blockHash: log.blockHash,
+              logIndex: log.index,
               confirmations: head - log.blockNumber + 1,
-              ...relation,
+              status: disposition === 'DUST' ? 'IGNORED_DUST' : 'PENDING',
+              rejectionReason:
+                disposition === 'DUST'
+                  ? `Below ${settings.minimumCreditedDepositAmount} USDT credit threshold`
+                  : null,
             })
             .onConflictDoNothing()
-            .returning({ id: platformWalletTransactions.id })
+            .returning({ id: deposits.id })
             .then((rows) => rows.at(0))
-          if (inserted) platformTransactions += 1
-          if (inserted && relation.classification === 'DUST') dustIgnored += 1
-        }
-      }
-    }
-
-    {
-      const nativeBlocks = await nativeTransfers(
-        rpcPool,
-        fromBlock,
-        toBlock,
-        rpcConcurrency,
-      )
-      for (const block of nativeBlocks) {
-        const blockNumber = block.number ? Number(BigInt(block.number)) : null
-        for (const transaction of block.transactions ?? []) {
-          if (!transaction.to || BigInt(transaction.value) <= 0n) continue
-          const fromWallet = managedWalletRows.find(
-            (wallet) =>
-              wallet.address.toLowerCase() === transaction.from.toLowerCase(),
-          )
-          const toWallet = managedWalletRows.find(
-            (wallet) =>
-              wallet.address.toLowerCase() === transaction.to!.toLowerCase(),
-          )
-          for (const match of [
-            fromWallet
-              ? { wallet: fromWallet, direction: 'OUTGOING' as const }
-              : null,
-            toWallet
-              ? { wallet: toWallet, direction: 'INCOMING' as const }
-              : null,
-          ].filter((item): item is NonNullable<typeof item> => Boolean(item))) {
-            const knownGasSweep = knownSweeps.find(
-              (sweep) =>
-                sweep.gasTxHash?.toLowerCase() ===
-                transaction.hash.toLowerCase(),
-            )
-            const knownControlledTransfer = controlledTransferByHash.get(
-              transaction.hash.toLowerCase(),
-            )
-            const classification = knownGasSweep
-              ? 'SWEEP_GAS'
-              : knownControlledTransfer
-                ? 'CONTROLLED_WALLET_TRANSFER'
-                : match.direction === 'INCOMING' &&
-                    match.wallet.role === 'SWEEP_GAS'
-                  ? 'GAS_TOP_UP'
-                  : null
-            const inserted = await db
-              .insert(platformWalletTransactions)
-              .values({
-                platformWalletId: match.wallet.id,
-                eventKey: `${settings.chainId}:${match.wallet.role}:${transaction.hash.toLowerCase()}:native`,
-                chainId: settings.chainId,
-                txHash: transaction.hash,
-                blockNumber,
-                direction: match.direction,
-                asset: 'BNB',
-                amount: formatUnits(BigInt(transaction.value), 18),
-                fromAddress: transaction.from,
-                toAddress: transaction.to,
-                status:
-                  blockNumber !== null && blockNumber <= finalized
-                    ? 'CONFIRMED'
-                    : 'PENDING',
-                confirmations:
-                  blockNumber === null ? 0 : head - blockNumber + 1,
-                classification,
-                relatedType: knownGasSweep
-                  ? 'wallet_sweep'
-                  : knownControlledTransfer
-                    ? 'controlled_wallet_transfer'
-                    : null,
-                relatedId:
-                  knownGasSweep?.id ?? knownControlledTransfer?.id ?? null,
-              })
-              .onConflictDoNothing()
-              .returning({ id: platformWalletTransactions.id })
-              .then((rows) => rows.at(0))
-            if (inserted) platformTransactions += 1
+          if (inserted && disposition === 'CREDIT') {
+            await confirmDeposit(inserted.id)
+            credited += 1
           }
-        }
-      }
-    }
-  }
-
-  const gasWalletRow = managedWalletRows.find(
-    (wallet) => wallet.role === 'SWEEP_GAS',
-  )
-  const recordedGasSweepIds = new Set(
-    recordedGasSweeps.flatMap((row) => (row.relatedId ? [row.relatedId] : [])),
-  )
-  if (gasWalletRow) {
-    for (const sweep of knownSweeps.filter(
-      (row) => row.gasTxHash && !recordedGasSweepIds.has(row.id),
-    )) {
-      const transaction = await transactionByHash(sweep.gasTxHash!).catch(
-        () => null,
-      )
-      if (!transaction || transaction.value <= 0n || !transaction.to) continue
-      const receipt = await transactionReceipt(sweep.gasTxHash!).catch(
-        () => null,
-      )
-      await db
-        .insert(platformWalletTransactions)
-        .values({
-          platformWalletId: gasWalletRow.id,
-          eventKey: `${settings.chainId}:SWEEP_GAS:${sweep.gasTxHash!.toLowerCase()}:native`,
-          chainId: settings.chainId,
-          txHash: sweep.gasTxHash!,
-          blockNumber: receipt?.blockNumber,
-          direction: 'OUTGOING',
-          asset: 'BNB',
-          amount: formatUnits(transaction.value, 18),
-          fromAddress: transaction.from,
-          toAddress: transaction.to,
-          status: receipt
-            ? receipt.status === 1
-              ? 'CONFIRMED'
-              : 'FAILED'
-            : 'PENDING',
-          confirmations: receipt ? head - receipt.blockNumber + 1 : 0,
-          classification: 'SWEEP_GAS',
-          relatedType: 'wallet_sweep',
-          relatedId: sweep.id,
-        })
-        .onConflictDoNothing()
-    }
-  }
-
-  await db
-    .update(platformWalletTransactions)
-    .set({
-      status: 'CONFIRMED',
-      confirmations: sql`${head} - ${platformWalletTransactions.blockNumber} + 1`,
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(platformWalletTransactions.chainId, settings.chainId),
-        eq(platformWalletTransactions.status, 'PENDING'),
-        sql`${platformWalletTransactions.blockNumber} is not null and ${platformWalletTransactions.blockNumber} <= ${finalized}`,
-      ),
-    )
-
-  if (fromBlock <= toBlock && addressRows.length > 0) {
-    // Some public BSC nodes reject OR filters containing multiple recipient
-    // topics. Query one address at a time by default; private RPCs can opt in
-    // to larger batches.
-    for (const addressChunk of chunks(addressRows, addressBatchSize)) {
-      const recipientTopics = addressChunk.map((row) =>
-        zeroPadValue(getAddress(row.address), 32),
-      )
-      const recipientFilter =
-        recipientTopics.length === 1 ? recipientTopics[0] : recipientTopics
-      const logs = await chunkedLogs({
-        rpcPool,
-        filter: {
-          address: settings.tokenContractAddress,
-          topics: [TRANSFER_TOPIC, null, recipientFilter],
-        },
-        fromBlock,
-        toBlock,
-        chunkBlocks: logChunkBlocks,
-        concurrency: rpcConcurrency,
-      })
-      for (const log of logs) {
-        const parsed = tokenInterface.parseLog(log)
-        if (!parsed) continue
-        const rawValue = parsed.args.value as bigint
-        const disposition = classifyDepositTransfer({
-          rawValue,
-          tokenDecimals: decimals,
-          minimumCreditedAmount: settings.minimumCreditedDepositAmount,
-        })
-        if (disposition === 'ZERO_VALUE') continue
-        const recipient = String(parsed.args.to).toLowerCase()
-        const walletAddress = addressMap.get(recipient)
-        if (!walletAddress) continue
-        const amount = formatUnits(rawValue, decimals)
-        const inserted = await db
-          .insert(deposits)
-          .values({
-            userId: walletAddress.userId,
-            walletAddressId: walletAddress.id,
-            amount,
-            network: settings.network,
-            txHash: log.transactionHash,
-            chainId: settings.chainId,
-            tokenContractAddress: settings.tokenContractAddress.toLowerCase(),
-            senderAddress: String(parsed.args.from),
-            blockNumber: log.blockNumber,
-            blockHash: log.blockHash,
-            logIndex: log.index,
-            confirmations: head - log.blockNumber + 1,
-            status: disposition === 'DUST' ? 'IGNORED_DUST' : 'PENDING',
-            rejectionReason:
-              disposition === 'DUST'
-                ? `Below ${settings.minimumCreditedDepositAmount} USDT credit threshold`
-                : null,
-          })
-          .onConflictDoNothing()
-          .returning({ id: deposits.id })
-          .then((rows) => rows.at(0))
-        if (inserted && disposition === 'CREDIT') {
-          await confirmDeposit(inserted.id)
-          credited += 1
-        }
-        if (inserted && disposition === 'DUST') dustIgnored += 1
-        await db
-          .update(walletAddresses)
-          .set({ lastSeenAt: new Date(), updatedAt: new Date() })
-          .where(eq(walletAddresses.id, walletAddress.id))
-      }
-    }
-  }
-
-  const staleBefore = Date.now() - 60_000
-  const balanceRows = addressRows
-    .filter(
-      (row) =>
-        !row.balanceCheckedAt || row.balanceCheckedAt.getTime() < staleBefore,
-    )
-    .slice(0, 20)
-  for (const addressChunk of chunks(balanceRows, 10)) {
-    await Promise.all(
-      addressChunk.map(async (addressRow) => {
-        try {
-          const [tokenBalance, nativeBalance] = await Promise.all([
-            tokenBalanceOf(addressRow.address),
-            nativeBalanceOf(addressRow.address),
-          ])
+          if (inserted && disposition === 'DUST') dustIgnored += 1
           await db
             .update(walletAddresses)
+            .set({ lastSeenAt: new Date(), updatedAt: new Date() })
+            .where(eq(walletAddresses.id, walletAddress.id))
+        }
+      }
+    }
+
+    const staleBefore = Date.now() - maintenanceIntervalMs
+    const balanceRows = addressRows
+      .filter(
+        (row) =>
+          !row.balanceCheckedAt || row.balanceCheckedAt.getTime() < staleBefore,
+      )
+      .slice(0, 20)
+    for (const addressChunk of chunks(balanceRows, 10)) {
+      await Promise.all(
+        addressChunk.map(async (addressRow) => {
+          try {
+            const [tokenBalance, nativeBalance] = await Promise.all([
+              tokenBalanceOf(addressRow.address),
+              nativeBalanceOf(addressRow.address),
+            ])
+            await db
+              .update(walletAddresses)
+              .set({
+                tokenBalance: formatUnits(tokenBalance, decimals),
+                nativeBalance: formatUnits(nativeBalance, 18),
+                balanceCheckedAt: new Date(),
+                updatedAt: new Date(),
+              })
+              .where(eq(walletAddresses.id, addressRow.id))
+          } catch (cause) {
+            console.error(`Balance check ${addressRow.id} failed`, cause)
+          }
+        }),
+      )
+    }
+
+    await db
+      .update(deposits)
+      .set({
+        chainFinalizedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(deposits.chainId, settings.chainId),
+          isNull(deposits.chainFinalizedAt),
+          sql`${deposits.blockNumber} <= ${finalized}`,
+        ),
+      )
+    await db
+      .update(deposits)
+      .set({ confirmations: sql`${head} - ${deposits.blockNumber} + 1` })
+      .where(eq(deposits.chainId, settings.chainId))
+
+    let swept = 0
+    if (settings.autoSweepEnabled) {
+      const readyAddresses = await db
+        .selectDistinct({ id: walletAddresses.id })
+        .from(walletAddresses)
+        .innerJoin(deposits, eq(deposits.walletAddressId, walletAddresses.id))
+        .leftJoin(
+          walletSweeps,
+          and(
+            eq(walletSweeps.walletAddressId, walletAddresses.id),
+            inArray(walletSweeps.status, [
+              'READY',
+              'GAS_BROADCAST',
+              'SWEEP_BROADCAST',
+            ]),
+          ),
+        )
+        .where(
+          and(
+            eq(walletAddresses.status, 'ACTIVE'),
+            eq(deposits.status, 'CONFIRMED'),
+            sql`${deposits.chainFinalizedAt} is not null`,
+            isNull(walletSweeps.id),
+          ),
+        )
+      for (const address of readyAddresses) {
+        try {
+          await requestWalletSweep(address.id)
+          swept += 1
+        } catch {
+          // Below-threshold and temporary signer failures are retried next run.
+        }
+      }
+    }
+
+    if (maintenanceDue) {
+      const pendingSweeps = await db
+        .select()
+        .from(walletSweeps)
+        .where(eq(walletSweeps.status, 'SWEEP_BROADCAST'))
+      for (const sweep of pendingSweeps) {
+        if (!sweep.sweepTxHash) continue
+        const receipt = await transactionReceipt(sweep.sweepTxHash)
+        if (!receipt) continue
+        if (receipt.status === 1) {
+          await db
+            .update(walletSweeps)
             .set({
-              tokenBalance: formatUnits(tokenBalance, decimals),
-              nativeBalance: formatUnits(nativeBalance, 18),
-              balanceCheckedAt: new Date(),
+              status: 'SWEPT',
+              confirmedAt: new Date(),
               updatedAt: new Date(),
             })
-            .where(eq(walletAddresses.id, addressRow.id))
-        } catch (cause) {
-          console.error(`Balance check ${addressRow.id} failed`, cause)
+            .where(eq(walletSweeps.id, sweep.id))
+          await db
+            .update(walletAddresses)
+            .set({ lastSweptAt: new Date(), updatedAt: new Date() })
+            .where(eq(walletAddresses.id, sweep.walletAddressId))
+        } else {
+          await db
+            .update(walletSweeps)
+            .set({
+              status: 'FAILED',
+              failureReason: 'Sweep transaction reverted',
+              updatedAt: new Date(),
+            })
+            .where(eq(walletSweeps.id, sweep.id))
         }
-      }),
-    )
-  }
+      }
+    }
 
-  await db
-    .update(deposits)
-    .set({
-      chainFinalizedAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(deposits.chainId, settings.chainId),
-        isNull(deposits.chainFinalizedAt),
-        sql`${deposits.blockNumber} <= ${finalized}`,
-      ),
+    let withdrawalsBroadcast = 0
+    const interruptedWithdrawals = await db
+      .select({ id: withdrawals.id })
+      .from(withdrawals)
+      .where(eq(withdrawals.status, 'PROCESSING'))
+    for (const withdrawal of interruptedWithdrawals) {
+      try {
+        await requestWithdrawalBroadcast(withdrawal.id)
+      } catch (cause) {
+        console.error(`Withdrawal retry ${withdrawal.id} failed`, cause)
+      }
+    }
+    const approvedWithdrawals = await db
+      .select({ id: withdrawals.id })
+      .from(withdrawals)
+      .where(eq(withdrawals.status, 'APPROVED'))
+    const minimumHotGasForTokenTransfer =
+      process.env.MIN_HOT_GAS_BNB ?? '0.00002'
+    const hotWalletBeforeTransfers = managedWalletRows.find(
+      (wallet) => wallet.role === 'HOT_WITHDRAWAL',
     )
-  await db
-    .update(deposits)
-    .set({ confirmations: sql`${head} - ${deposits.blockNumber} + 1` })
-    .where(eq(deposits.chainId, settings.chainId))
+    const hotWalletHasGasBeforeTransfers = hasSufficientHotGas(
+      hotWalletBeforeTransfers?.nativeBalance ?? '0',
+      minimumHotGasForTokenTransfer,
+    )
+    for (const withdrawal of approvedWithdrawals) {
+      if (!hotWalletHasGasBeforeTransfers) {
+        console.warn(
+          `Withdrawal ${withdrawal.id} waiting for confirmed hot-wallet BNB`,
+        )
+        continue
+      }
+      try {
+        await requestWithdrawalBroadcast(withdrawal.id)
+        withdrawalsBroadcast += 1
+      } catch (cause) {
+        console.error(`Withdrawal ${withdrawal.id} failed`, cause)
+      }
+    }
 
-  let swept = 0
-  if (settings.autoSweepEnabled) {
-    const readyAddresses = await db
-      .selectDistinct({ id: walletAddresses.id })
-      .from(walletAddresses)
-      .innerJoin(deposits, eq(deposits.walletAddressId, walletAddresses.id))
-      .leftJoin(
-        walletSweeps,
+    // Platform BNB movements are processed before token transfers. Treasury and
+    // user transfers are gated below until the hot wallet has confirmed gas.
+    const interruptedControlledTransfers = await db
+      .select({ id: controlledWalletTransfers.id })
+      .from(controlledWalletTransfers)
+      .where(eq(controlledWalletTransfers.status, 'PROCESSING'))
+    for (const transfer of interruptedControlledTransfers) {
+      try {
+        await requestControlledWalletTransferBroadcast(transfer.id)
+      } catch (cause) {
+        console.error(`Controlled transfer retry ${transfer.id} failed`, cause)
+      }
+    }
+    const approvedControlledTransfers = await db
+      .select({ id: controlledWalletTransfers.id })
+      .from(controlledWalletTransfers)
+      .where(eq(controlledWalletTransfers.status, 'APPROVED'))
+    let controlledTransfersBroadcast = 0
+    for (const transfer of approvedControlledTransfers) {
+      try {
+        await requestControlledWalletTransferBroadcast(transfer.id)
+        controlledTransfersBroadcast += 1
+      } catch (cause) {
+        console.error(`Controlled transfer ${transfer.id} failed`, cause)
+      }
+    }
+
+    const interruptedTreasury = await db
+      .select({ id: treasuryTransfers.id })
+      .from(treasuryTransfers)
+      .where(eq(treasuryTransfers.status, 'PROCESSING'))
+    for (const transfer of interruptedTreasury) {
+      try {
+        await requestTreasuryBroadcast(transfer.id)
+      } catch (cause) {
+        console.error(`Treasury retry ${transfer.id} failed`, cause)
+      }
+    }
+    const approvedTreasury = await db
+      .select({ id: treasuryTransfers.id })
+      .from(treasuryTransfers)
+      .where(eq(treasuryTransfers.status, 'APPROVED'))
+    let treasuryBroadcast = 0
+    const hotWallet = managedWalletRows.find(
+      (wallet) => wallet.role === 'HOT_WITHDRAWAL',
+    )
+    const pendingHotFunding = await db
+      .select({ id: controlledWalletTransfers.id })
+      .from(controlledWalletTransfers)
+      .where(
         and(
-          eq(walletSweeps.walletAddressId, walletAddresses.id),
-          inArray(walletSweeps.status, [
-            'READY',
-            'GAS_BROADCAST',
-            'SWEEP_BROADCAST',
+          eq(controlledWalletTransfers.destinationRole, 'HOT_WITHDRAWAL'),
+          inArray(controlledWalletTransfers.status, [
+            'APPROVED',
+            'PROCESSING',
+            'BROADCAST',
           ]),
         ),
       )
-      .where(
-        and(
-          eq(walletAddresses.status, 'ACTIVE'),
-          eq(deposits.status, 'CONFIRMED'),
-          sql`${deposits.chainFinalizedAt} is not null`,
-          isNull(walletSweeps.id),
-        ),
-      )
-    for (const address of readyAddresses) {
+      .limit(1)
+      .then((rows) => rows.at(0))
+    const hotWalletHasGas = hasSufficientHotGas(
+      hotWallet?.nativeBalance ?? '0',
+      minimumHotGasForTokenTransfer,
+    )
+    for (const transfer of approvedTreasury) {
+      if (!hotWalletHasGas || pendingHotFunding) {
+        console.warn(
+          `Treasury transfer ${transfer.id} waiting for confirmed hot-wallet BNB`,
+        )
+        continue
+      }
       try {
-        await requestWalletSweep(address.id)
-        swept += 1
-      } catch {
-        // Below-threshold and temporary signer failures are retried next run.
+        await requestTreasuryBroadcast(transfer.id)
+        treasuryBroadcast += 1
+      } catch (cause) {
+        console.error(`Treasury transfer ${transfer.id} failed`, cause)
       }
     }
-  }
-
-  const pendingSweeps = await db
-    .select()
-    .from(walletSweeps)
-    .where(eq(walletSweeps.status, 'SWEEP_BROADCAST'))
-  for (const sweep of pendingSweeps) {
-    if (!sweep.sweepTxHash) continue
-    const receipt = await transactionReceipt(sweep.sweepTxHash)
-    if (!receipt) continue
-    if (receipt.status === 1) {
-      await db
-        .update(walletSweeps)
-        .set({
-          status: 'SWEPT',
-          confirmedAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .where(eq(walletSweeps.id, sweep.id))
-      await db
-        .update(walletAddresses)
-        .set({ lastSweptAt: new Date(), updatedAt: new Date() })
-        .where(eq(walletAddresses.id, sweep.walletAddressId))
-    } else {
-      await db
-        .update(walletSweeps)
-        .set({
-          status: 'FAILED',
-          failureReason: 'Sweep transaction reverted',
-          updatedAt: new Date(),
-        })
-        .where(eq(walletSweeps.id, sweep.id))
-    }
-  }
-
-  let withdrawalsBroadcast = 0
-  const interruptedWithdrawals = await db
-    .select({ id: withdrawals.id })
-    .from(withdrawals)
-    .where(eq(withdrawals.status, 'PROCESSING'))
-  for (const withdrawal of interruptedWithdrawals) {
-    try {
-      await requestWithdrawalBroadcast(withdrawal.id)
-    } catch (cause) {
-      console.error(`Withdrawal retry ${withdrawal.id} failed`, cause)
-    }
-  }
-  const approvedWithdrawals = await db
-    .select({ id: withdrawals.id })
-    .from(withdrawals)
-    .where(eq(withdrawals.status, 'APPROVED'))
-  const minimumHotGasForTokenTransfer = process.env.MIN_HOT_GAS_BNB ?? '0.00002'
-  const hotWalletBeforeTransfers = managedWalletRows.find(
-    (wallet) => wallet.role === 'HOT_WITHDRAWAL',
-  )
-  const hotWalletHasGasBeforeTransfers = hasSufficientHotGas(
-    hotWalletBeforeTransfers?.nativeBalance ?? '0',
-    minimumHotGasForTokenTransfer,
-  )
-  for (const withdrawal of approvedWithdrawals) {
-    if (!hotWalletHasGasBeforeTransfers) {
-      console.warn(
-        `Withdrawal ${withdrawal.id} waiting for confirmed hot-wallet BNB`,
-      )
-      continue
-    }
-    try {
-      await requestWithdrawalBroadcast(withdrawal.id)
-      withdrawalsBroadcast += 1
-    } catch (cause) {
-      console.error(`Withdrawal ${withdrawal.id} failed`, cause)
-    }
-  }
-
-  const broadcastWithdrawals = await db
-    .select({ id: withdrawals.id, txHash: withdrawals.txHash })
-    .from(withdrawals)
-    .where(eq(withdrawals.status, 'BROADCAST'))
-  for (const withdrawal of broadcastWithdrawals) {
-    if (!withdrawal.txHash) continue
-    const receipt = await transactionReceipt(withdrawal.txHash)
-    if (receipt)
-      await settleBroadcastWithdrawal(withdrawal.id, receipt.status === 1)
-  }
-
-  // Platform BNB movements are processed before token transfers. Treasury and
-  // user transfers are gated below until the hot wallet has confirmed gas.
-  const interruptedControlledTransfers = await db
-    .select({ id: controlledWalletTransfers.id })
-    .from(controlledWalletTransfers)
-    .where(eq(controlledWalletTransfers.status, 'PROCESSING'))
-  for (const transfer of interruptedControlledTransfers) {
-    try {
-      await requestControlledWalletTransferBroadcast(transfer.id)
-    } catch (cause) {
-      console.error(`Controlled transfer retry ${transfer.id} failed`, cause)
-    }
-  }
-  const approvedControlledTransfers = await db
-    .select({ id: controlledWalletTransfers.id })
-    .from(controlledWalletTransfers)
-    .where(eq(controlledWalletTransfers.status, 'APPROVED'))
-  let controlledTransfersBroadcast = 0
-  for (const transfer of approvedControlledTransfers) {
-    try {
-      await requestControlledWalletTransferBroadcast(transfer.id)
-      controlledTransfersBroadcast += 1
-    } catch (cause) {
-      console.error(`Controlled transfer ${transfer.id} failed`, cause)
-    }
-  }
-
-  const interruptedTreasury = await db
-    .select({ id: treasuryTransfers.id })
-    .from(treasuryTransfers)
-    .where(eq(treasuryTransfers.status, 'PROCESSING'))
-  for (const transfer of interruptedTreasury) {
-    try {
-      await requestTreasuryBroadcast(transfer.id)
-    } catch (cause) {
-      console.error(`Treasury retry ${transfer.id} failed`, cause)
-    }
-  }
-  const approvedTreasury = await db
-    .select({ id: treasuryTransfers.id })
-    .from(treasuryTransfers)
-    .where(eq(treasuryTransfers.status, 'APPROVED'))
-  let treasuryBroadcast = 0
-  const hotWallet = managedWalletRows.find(
-    (wallet) => wallet.role === 'HOT_WITHDRAWAL',
-  )
-  const pendingHotFunding = await db
-    .select({ id: controlledWalletTransfers.id })
-    .from(controlledWalletTransfers)
-    .where(
-      and(
-        eq(controlledWalletTransfers.destinationRole, 'HOT_WITHDRAWAL'),
-        inArray(controlledWalletTransfers.status, [
-          'APPROVED',
-          'PROCESSING',
-          'BROADCAST',
-        ]),
-      ),
-    )
-    .limit(1)
-    .then((rows) => rows.at(0))
-  const hotWalletHasGas = hasSufficientHotGas(
-    hotWallet?.nativeBalance ?? '0',
-    minimumHotGasForTokenTransfer,
-  )
-  for (const transfer of approvedTreasury) {
-    if (!hotWalletHasGas || pendingHotFunding) {
-      console.warn(
-        `Treasury transfer ${transfer.id} waiting for confirmed hot-wallet BNB`,
-      )
-      continue
-    }
-    try {
-      await requestTreasuryBroadcast(transfer.id)
-      treasuryBroadcast += 1
-    } catch (cause) {
-      console.error(`Treasury transfer ${transfer.id} failed`, cause)
-    }
-  }
-  const broadcastTreasury = await db
-    .select({ id: treasuryTransfers.id, txHash: treasuryTransfers.txHash })
-    .from(treasuryTransfers)
-    .where(eq(treasuryTransfers.status, 'BROADCAST'))
-  for (const transfer of broadcastTreasury) {
-    if (!transfer.txHash) continue
-    const receipt = await transactionReceipt(transfer.txHash)
-    if (receipt?.status === 1)
-      await advanceTreasuryStatus(
-        transfer.id,
-        'BROADCAST',
-        'CONFIRMED',
-        undefined,
-      )
-    else if (receipt?.status === 0)
-      await failBroadcastTreasuryTransfer(transfer.id)
-  }
-
-  const broadcastControlledTransfers = await db
-    .select({
-      id: controlledWalletTransfers.id,
-      txHash: controlledWalletTransfers.txHash,
-    })
-    .from(controlledWalletTransfers)
-    .where(eq(controlledWalletTransfers.status, 'BROADCAST'))
-  for (const transfer of broadcastControlledTransfers) {
-    if (!transfer.txHash) continue
-    const receipt = await transactionReceipt(transfer.txHash)
-    if (receipt)
-      await settleControlledWalletTransfer(transfer.id, receipt.status === 1)
-  }
-
-  const rpcSnapshot = rpcPool.snapshot()
-  const rpcFailoverCount =
-    (state?.rpcFailoverCount ?? 0) + rpcSnapshot.failovers
-  await db
-    .insert(chainWatcherState)
-    .values({
-      id: 1,
-      chainId: settings.chainId,
-      lastScannedBlock: toBlock,
-      lastHeadBlock: head,
-      lastRunAt: new Date(),
-      lastError: null,
-      activeRpcIndex: rpcSnapshot.activeIndex,
-      rpcFailoverCount,
-      lastRpcFailoverAt:
-        rpcSnapshot.lastFailoverAt ?? state?.lastRpcFailoverAt ?? null,
-    })
-    .onConflictDoUpdate({
-      target: chainWatcherState.id,
-      set: {
+    const rpcSnapshot = rpcPool.snapshot()
+    const rpcFailoverCount =
+      (state?.rpcFailoverCount ?? 0) + rpcSnapshot.failovers
+    await db
+      .insert(chainWatcherState)
+      .values({
+        id: 1,
+        chainId: settings.chainId,
         lastScannedBlock: toBlock,
         lastHeadBlock: head,
         lastRunAt: new Date(),
@@ -1114,24 +1113,39 @@ async function runChainWorkerBatch() {
         rpcFailoverCount,
         lastRpcFailoverAt:
           rpcSnapshot.lastFailoverAt ?? state?.lastRpcFailoverAt ?? null,
-        updatedAt: new Date(),
-      },
-    })
-  return {
-    fromBlock,
-    toBlock,
-    head,
-    finalized,
-    credited,
-    swept,
-    withdrawalsBroadcast,
-    treasuryBroadcast,
-    controlledTransfersBroadcast,
-    platformTransactions,
-    dustIgnored,
-    activeRpc: rpcSnapshot.activeIndex + 1,
-    rpcEndpoints: rpcSnapshot.endpointCount,
-    rpcFailovers: rpcSnapshot.failovers,
+      })
+      .onConflictDoUpdate({
+        target: chainWatcherState.id,
+        set: {
+          lastScannedBlock: toBlock,
+          lastHeadBlock: head,
+          lastRunAt: new Date(),
+          lastError: null,
+          activeRpcIndex: rpcSnapshot.activeIndex,
+          rpcFailoverCount,
+          lastRpcFailoverAt:
+            rpcSnapshot.lastFailoverAt ?? state?.lastRpcFailoverAt ?? null,
+          updatedAt: new Date(),
+        },
+      })
+    return {
+      fromBlock,
+      toBlock,
+      head,
+      finalized,
+      credited,
+      swept,
+      withdrawalsBroadcast,
+      treasuryBroadcast,
+      controlledTransfersBroadcast,
+      platformTransactions,
+      dustIgnored,
+      activeRpc: rpcSnapshot.activeIndex + 1,
+      rpcEndpoints: rpcSnapshot.endpointCount,
+      rpcFailovers: rpcSnapshot.failovers,
+    }
+  } finally {
+    rpcPool.destroy()
   }
 }
 

@@ -10,6 +10,14 @@ type RpcEndpoint = {
   provider: JsonRpcProvider
   cooldownUntil: number
   disabled: boolean
+  availableTokens: number
+  lastRefillAt: number
+  rateMultiplier: number
+}
+
+export type RpcRequestOptions = {
+  /** Approximate Alchemy throughput compute units consumed by the request. */
+  cost?: number
 }
 
 export type RpcPoolSnapshot = {
@@ -28,6 +36,8 @@ export class RpcPool {
   private lastFailoverAt: Date | null = null
   private cooldownMs: number
   private requestTimeoutMs: number
+  private targetCuPerSecond: number
+  private burstCapacity: number
 
   constructor(input: {
     chainId: number
@@ -38,6 +48,16 @@ export class RpcPool {
   }) {
     const urls = input.urls ?? configuredRpcUrls()
     if (!urls.length) throw new Error('BSC_RPC_URLS or BSC_RPC_URL is required')
+    this.targetCuPerSecond = Math.max(
+      10,
+      Number(process.env.BSC_RPC_TARGET_CU_PER_SECOND || 180),
+    )
+    const burstSeconds = Math.min(
+      10,
+      Math.max(1, Number(process.env.BSC_RPC_BURST_SECONDS || 2)),
+    )
+    this.burstCapacity = this.targetCuPerSecond * burstSeconds
+    const now = Date.now()
     this.endpoints = urls.map((url) => ({
       url,
       provider: new JsonRpcProvider(url, input.chainId, {
@@ -45,6 +65,9 @@ export class RpcPool {
       }),
       cooldownUntil: 0,
       disabled: false,
+      availableTokens: this.burstCapacity,
+      lastRefillAt: now,
+      rateMultiplier: 1,
     }))
     this.activeIndex = Math.abs(input.startIndex ?? 0) % this.endpoints.length
     this.cooldownMs = Math.max(
@@ -97,18 +120,59 @@ export class RpcPool {
     this.lastFailoverAt = new Date()
   }
 
+  private refill(endpoint: RpcEndpoint) {
+    const now = Date.now()
+    const elapsedMs = Math.max(0, now - endpoint.lastRefillAt)
+    endpoint.availableTokens = Math.min(
+      this.burstCapacity,
+      endpoint.availableTokens +
+        (elapsedMs * this.targetCuPerSecond * endpoint.rateMultiplier) / 1_000,
+    )
+    endpoint.lastRefillAt = now
+  }
+
+  private reserve(endpoint: RpcEndpoint, cost: number) {
+    this.refill(endpoint)
+    if (endpoint.availableTokens < cost) return false
+    endpoint.availableTokens -= cost
+    return true
+  }
+
+  private nextAvailableDelay(cost: number) {
+    const now = Date.now()
+    const delays = this.endpoints.flatMap((endpoint) => {
+      if (endpoint.disabled) return []
+      this.refill(endpoint)
+      const cooldownDelay = Math.max(0, endpoint.cooldownUntil - now)
+      const tokenDelay = Math.max(
+        0,
+        ((cost - endpoint.availableTokens) /
+          (this.targetCuPerSecond * endpoint.rateMultiplier)) *
+          1_000,
+      )
+      return [Math.max(cooldownDelay, tokenDelay)]
+    })
+    return delays.length ? Math.max(10, Math.min(...delays)) : 0
+  }
+
   async run<T>(
     operation: (endpoint: {
       provider: JsonRpcProvider
       url: string
       index: number
     }) => Promise<T>,
-  ) {
+    options: RpcRequestOptions = {},
+  ): Promise<T> {
+    const cost = Math.min(
+      this.burstCapacity,
+      Math.max(1, Number(options.cost ?? 10)),
+    )
     let lastCause: unknown
     const attempted = new Set<number>()
     for (const index of this.candidateIndexes()) {
       const endpoint = this.endpoints[index]
       if (endpoint.disabled || endpoint.cooldownUntil > Date.now()) continue
+      if (!this.reserve(endpoint, cost)) continue
       attempted.add(index)
       try {
         const result = await this.withTimeout(
@@ -119,56 +183,39 @@ export class RpcPool {
           }),
           index,
         )
-        this.activeIndex = index
+        // Successful requests rotate fairly so all configured accounts share
+        // the work before any single account approaches its rolling limit.
+        this.activeIndex = (index + 1) % this.endpoints.length
         endpoint.cooldownUntil = 0
+        endpoint.rateMultiplier = Math.min(1, endpoint.rateMultiplier + 0.02)
         return result
       } catch (cause) {
         lastCause = cause
         const category = rpcFailureCategory(cause)
         if (category === 'PERMANENT') throw cause
         if (category === 'AUTHENTICATION') endpoint.disabled = true
-        else endpoint.cooldownUntil = Date.now() + this.cooldownMs
+        else {
+          if (category === 'RATE_LIMIT')
+            endpoint.rateMultiplier = Math.max(
+              0.25,
+              endpoint.rateMultiplier * 0.7,
+            )
+          endpoint.cooldownUntil = Date.now() + this.cooldownMs
+        }
         this.rotate(index)
       }
     }
 
-    const cooling = this.endpoints
-      .map((endpoint, index) => ({ endpoint, index }))
-      .filter(
-        ({ endpoint, index }) =>
-          !attempted.has(index) &&
-          !endpoint.disabled &&
-          endpoint.cooldownUntil > Date.now(),
-      )
-      .sort(
-        (left, right) =>
-          left.endpoint.cooldownUntil - right.endpoint.cooldownUntil,
-      )
-      .at(0)
-    if (cooling) {
-      await new Promise((resolve) =>
-        setTimeout(
-          resolve,
-          Math.max(0, cooling.endpoint.cooldownUntil - Date.now()),
-        ),
-      )
-      try {
-        const result = await this.withTimeout(
-          operation({
-            provider: cooling.endpoint.provider,
-            url: cooling.endpoint.url,
-            index: cooling.index,
-          }),
-          cooling.index,
-        )
-        this.activeIndex = cooling.index
-        cooling.endpoint.cooldownUntil = 0
-        return result
-      } catch (cause) {
-        lastCause = cause
-      }
+    const delay = this.nextAvailableDelay(cost)
+    if (delay > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delay))
+      return this.run(operation, options)
     }
     throw lastCause ?? new Error('No healthy BSC RPC endpoint is available')
+  }
+
+  destroy() {
+    for (const endpoint of this.endpoints) endpoint.provider.destroy()
   }
 
   snapshot(): RpcPoolSnapshot {
