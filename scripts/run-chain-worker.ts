@@ -13,6 +13,7 @@ function safeError(cause: unknown) {
 }
 
 const startedAt = new Date()
+let exitCode = 0
 
 try {
   const result = await runChainWorker()
@@ -47,7 +48,16 @@ try {
     .values({ status: 'FAILED', error: message, startedAt })
     .catch(() => undefined)
   await evaluateOperationalHealth().catch(() => undefined)
-  process.exitCode = 1
+  exitCode = 1
 } finally {
-  await closePool()
+  // This is a short-lived systemd oneshot command. A stale database, HTTP or
+  // library handle must never keep the service in "activating" after the
+  // scanner result has been safely recorded, because that blocks the timer's
+  // next execution and lets chain lag grow indefinitely.
+  await Promise.race([
+    closePool(),
+    new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
+  ])
 }
+
+process.exit(exitCode)
