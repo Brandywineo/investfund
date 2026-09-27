@@ -6,10 +6,12 @@ import {
   auditLogs,
   chainWatcherState,
   chainWorkerRuns,
+  custodySettings,
   operationalEvents,
 } from '#/db/schema'
 import { getSessionUser } from './session'
 import { evaluateOperationalHealth } from './operations.service'
+import { RpcPool } from './rpc-pool'
 
 async function requireAdmin() {
   const user = await getSessionUser()
@@ -72,9 +74,22 @@ export const checkpointChainScanner = createServerFn({ method: 'POST' })
       .where(eq(chainWatcherState.id, 1))
       .limit(1)
       .then((rows) => rows.at(0))
-    if (!state?.lastHeadBlock)
-      throw new Error('The scanner has not recorded a chain head yet')
-    const target = Math.max(0, state.lastHeadBlock - data.safetyOffset)
+    if (!state) throw new Error('The scanner has not been initialized yet')
+    const settings = await db
+      .select({ chainId: custodySettings.chainId })
+      .from(custodySettings)
+      .where(eq(custodySettings.id, 1))
+      .limit(1)
+      .then((rows) => rows.at(0))
+    if (!settings) throw new Error('Custody settings are not initialized')
+    const rpcPool = new RpcPool({
+      chainId: settings.chainId,
+      startIndex: state.activeRpcIndex,
+    })
+    const liveHead = await rpcPool.run(({ provider }) =>
+      provider.getBlockNumber(),
+    )
+    const target = Math.max(0, liveHead - data.safetyOffset)
     if (target <= state.lastScannedBlock)
       throw new Error('The scanner is already at or ahead of this checkpoint')
     const now = new Date()
@@ -83,6 +98,7 @@ export const checkpointChainScanner = createServerFn({ method: 'POST' })
         .update(chainWatcherState)
         .set({
           lastScannedBlock: target,
+          lastHeadBlock: liveHead,
           lastError: null,
           updatedAt: now,
         })
@@ -98,6 +114,7 @@ export const checkpointChainScanner = createServerFn({ method: 'POST' })
         },
         after: {
           lastScannedBlock: target,
+          liveHeadBlock: liveHead,
           safetyOffset: data.safetyOffset,
           skippedFrom: state.lastScannedBlock + 1,
           skippedTo: target,
