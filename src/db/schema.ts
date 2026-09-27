@@ -40,6 +40,7 @@ export const ledgerAccountType = pgEnum('ledger_account_type', [
 export const depositStatus = pgEnum('deposit_status', [
   'PENDING',
   'CONFIRMED',
+  'IGNORED_DUST',
   'REJECTED',
 ])
 export const treasuryTransferStatus = pgEnum('treasury_transfer_status', [
@@ -301,6 +302,12 @@ export const custodySettings = pgTable('custody_settings', {
     scale: 8,
   })
     .default('10')
+    .notNull(),
+  minimumCreditedDepositAmount: numeric('minimum_credited_deposit_amount', {
+    precision: 20,
+    scale: 8,
+  })
+    .default('0.10')
     .notNull(),
   minimumWithdrawalAmount: numeric('minimum_withdrawal_amount', {
     precision: 20,

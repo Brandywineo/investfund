@@ -435,6 +435,7 @@ export const updateCustodySettings = createServerFn({ method: 'POST' })
       tokenContractAddress: z.string().trim().min(20).max(160),
       autoSweepEnabled: z.boolean(),
       minimumSweepAmount: z.number().min(0).max(1_000_000_000),
+      minimumCreditedDepositAmount: z.number().positive().max(1_000_000_000),
       minimumWithdrawalAmount: z.number().min(0).max(1_000_000_000),
     }),
   )
@@ -459,6 +460,9 @@ export const updateCustodySettings = createServerFn({ method: 'POST' })
           tokenContractAddress: data.tokenContractAddress,
           autoSweepEnabled: data.autoSweepEnabled,
           minimumSweepAmount: String(data.minimumSweepAmount),
+          minimumCreditedDepositAmount: String(
+            data.minimumCreditedDepositAmount,
+          ),
           minimumWithdrawalAmount: String(data.minimumWithdrawalAmount),
           updatedAt: new Date(),
         })

@@ -70,6 +70,9 @@ function CustodyAdminPage() {
             tokenContractAddress: String(f.get('tokenContract')),
             autoSweepEnabled: f.get('autoSweep') === 'on',
             minimumSweepAmount: Number(f.get('minimumSweep')),
+            minimumCreditedDepositAmount: Number(
+              f.get('minimumCreditedDeposit'),
+            ),
             minimumWithdrawalAmount: Number(f.get('minimumWithdrawal')),
           },
         }),
@@ -307,6 +310,21 @@ function CustodyAdminPage() {
                   defaultValue={data.settings.minimumSweepAmount}
                   className={input}
                 />
+              </label>
+              <label className="text-sm font-semibold">
+                Minimum credited deposit
+                <input
+                  name="minimumCreditedDeposit"
+                  type="number"
+                  min="0.00000001"
+                  step="0.00000001"
+                  defaultValue={data.settings.minimumCreditedDepositAmount}
+                  className={input}
+                />
+                <span className="mt-1 block text-xs font-normal text-black/50">
+                  Smaller positive transfers are recorded as dust and never
+                  credited or swept.
+                </span>
               </label>
               <label className="text-sm font-semibold">
                 Minimum withdrawal

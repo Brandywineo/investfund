@@ -1,0 +1,2 @@
+ALTER TYPE "public"."deposit_status" ADD VALUE 'IGNORED_DUST' BEFORE 'REJECTED';--> statement-breakpoint
+ALTER TABLE "custody_settings" ADD COLUMN "minimum_credited_deposit_amount" numeric(20, 8) DEFAULT '0.10' NOT NULL;

@@ -11,6 +11,7 @@ import type { Filter, Log } from 'ethers'
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { getDb } from '#/db'
 import { hasSufficientHotGas, scannerBlockRanges } from '#/domain/chain-worker'
+import { classifyDepositTransfer } from '#/domain/deposit-transfer'
 import {
   chainWatcherState,
   controlledWalletTransfers,
@@ -501,6 +502,7 @@ export async function runChainWorker() {
       .map((row) => [row.txHash!.toLowerCase(), row]),
   )
   let platformTransactions = 0
+  let dustIgnored = 0
 
   if (fromBlock <= toBlock) {
     for (const wallet of managedWalletRows) {
@@ -523,6 +525,8 @@ export async function runChainWorker() {
         for (const log of logs) {
           const parsed = tokenInterface.parseLog(log)
           if (!parsed) continue
+          const rawValue = parsed.args.value as bigint
+          if (rawValue <= 0n) continue
           const txHash = log.transactionHash.toLowerCase()
           const knownSweep = sweepByHash.get(txHash)
           const knownWithdrawal = withdrawalByHash.get(txHash)
@@ -550,9 +554,18 @@ export async function runChainWorker() {
                   }
                 : {
                     classification:
-                      direction === 'INCOMING' && wallet.role === 'SWEEP_GAS'
-                        ? 'GAS_TOP_UP'
-                        : null,
+                      direction === 'INCOMING' &&
+                      classifyDepositTransfer({
+                        rawValue,
+                        tokenDecimals: decimals,
+                        minimumCreditedAmount:
+                          settings.minimumCreditedDepositAmount,
+                      }) === 'DUST'
+                        ? 'DUST'
+                        : direction === 'INCOMING' &&
+                            wallet.role === 'SWEEP_GAS'
+                          ? 'GAS_TOP_UP'
+                          : null,
                     relatedType: null,
                     relatedId: null,
                   }
@@ -567,7 +580,7 @@ export async function runChainWorker() {
               blockNumber: log.blockNumber,
               direction,
               asset: 'USDT',
-              amount: formatUnits(parsed.args.value as bigint, decimals),
+              amount: formatUnits(rawValue, decimals),
               fromAddress: String(parsed.args.from),
               toAddress: String(parsed.args.to),
               status: log.blockNumber <= finalized ? 'CONFIRMED' : 'PENDING',
@@ -578,6 +591,7 @@ export async function runChainWorker() {
             .returning({ id: platformWalletTransactions.id })
             .then((rows) => rows.at(0))
           if (inserted) platformTransactions += 1
+          if (inserted && relation.classification === 'DUST') dustIgnored += 1
         }
       }
     }
@@ -746,10 +760,17 @@ export async function runChainWorker() {
       for (const log of logs) {
         const parsed = tokenInterface.parseLog(log)
         if (!parsed) continue
+        const rawValue = parsed.args.value as bigint
+        const disposition = classifyDepositTransfer({
+          rawValue,
+          tokenDecimals: decimals,
+          minimumCreditedAmount: settings.minimumCreditedDepositAmount,
+        })
+        if (disposition === 'ZERO_VALUE') continue
         const recipient = String(parsed.args.to).toLowerCase()
         const walletAddress = addressMap.get(recipient)
         if (!walletAddress) continue
-        const amount = formatUnits(parsed.args.value as bigint, decimals)
+        const amount = formatUnits(rawValue, decimals)
         const inserted = await db
           .insert(deposits)
           .values({
@@ -765,15 +786,20 @@ export async function runChainWorker() {
             blockHash: log.blockHash,
             logIndex: log.index,
             confirmations: head - log.blockNumber + 1,
-            status: 'PENDING',
+            status: disposition === 'DUST' ? 'IGNORED_DUST' : 'PENDING',
+            rejectionReason:
+              disposition === 'DUST'
+                ? `Below ${settings.minimumCreditedDepositAmount} USDT credit threshold`
+                : null,
           })
           .onConflictDoNothing()
           .returning({ id: deposits.id })
           .then((rows) => rows.at(0))
-        if (inserted) {
+        if (inserted && disposition === 'CREDIT') {
           await confirmDeposit(inserted.id)
           credited += 1
         }
+        if (inserted && disposition === 'DUST') dustIgnored += 1
         await db
           .update(walletAddresses)
           .set({ lastSeenAt: new Date(), updatedAt: new Date() })
@@ -851,6 +877,7 @@ export async function runChainWorker() {
       .where(
         and(
           eq(walletAddresses.status, 'ACTIVE'),
+          eq(deposits.status, 'CONFIRMED'),
           sql`${deposits.chainFinalizedAt} is not null`,
           isNull(walletSweeps.id),
         ),
@@ -1101,6 +1128,7 @@ export async function runChainWorker() {
     treasuryBroadcast,
     controlledTransfersBroadcast,
     platformTransactions,
+    dustIgnored,
     activeRpc: rpcSnapshot.activeIndex + 1,
     rpcEndpoints: rpcSnapshot.endpointCount,
     rpcFailovers: rpcSnapshot.failovers,
