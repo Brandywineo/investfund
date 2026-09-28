@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 
@@ -92,18 +93,68 @@ export function AuthField({
   required?: boolean
   defaultValue?: string
 }) {
+  const isPassword = type === 'password'
+  const [passwordVisible, setPasswordVisible] = useState(false)
+
   return (
     <label className="block">
       <span className="mb-2 block text-sm font-semibold">{label}</span>
-      <input
-        className="w-full rounded-2xl border border-black/10 bg-white px-4 py-3.5 outline-none transition focus:border-[#85ae38] focus:ring-4 focus:ring-[#85ae38]/15"
-        name={name}
-        type={type}
-        autoComplete={autoComplete}
-        required={required}
-        defaultValue={defaultValue}
-      />
+      <span className="relative block">
+        <input
+          className={`w-full rounded-2xl border border-black/10 bg-white px-4 py-3.5 outline-none transition focus:border-[#85ae38] focus:ring-4 focus:ring-[#85ae38]/15 ${isPassword ? 'pr-12' : ''}`}
+          name={name}
+          type={isPassword && passwordVisible ? 'text' : type}
+          autoComplete={autoComplete}
+          required={required}
+          defaultValue={defaultValue}
+        />
+        {isPassword ? (
+          <button
+            type="button"
+            className="absolute inset-y-0 right-1 grid w-11 place-items-center rounded-xl text-[#6e857a] transition hover:bg-[#123d2d]/5 hover:text-[#123d2d] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#85ae38]"
+            aria-label={passwordVisible ? 'Hide password' : 'Show password'}
+            aria-pressed={passwordVisible}
+            onClick={() => setPasswordVisible((visible) => !visible)}
+          >
+            {passwordVisible ? <EyeOffIcon /> : <EyeIcon />}
+          </button>
+        ) : null}
+      </span>
     </label>
+  )
+}
+
+function EyeIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="size-5"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+    >
+      <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+      <circle cx="12" cy="12" r="2.75" />
+    </svg>
+  )
+}
+
+function EyeOffIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="size-5"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+    >
+      <path d="M3 3l18 18" />
+      <path d="M10.6 6.1A10.6 10.6 0 0 1 12 6c6 0 9.5 6 9.5 6a15 15 0 0 1-2.4 3.1M6.2 6.2C3.8 8 2.5 12 2.5 12s3.5 6 9.5 6a9.8 9.8 0 0 0 3.2-.5" />
+      <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+    </svg>
   )
 }
 
