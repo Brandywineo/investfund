@@ -27,9 +27,14 @@ export async function synchronizeMt5() {
       set: { lastSyncStartedAt: startedAt, updatedAt: startedAt },
     })
   try {
-    // Re-read a small overlap so deals around the cursor cannot be missed.
+    // Re-read a wide overlap because MT5 can expose a vanished live position
+    // before its closing deal becomes visible through history_deals_get().
+    const historyOverlapMs = Math.max(
+      5 * 60_000,
+      Number(process.env.MT5_HISTORY_OVERLAP_MS || 7 * 24 * 60 * 60_000),
+    )
     const historyFrom = state?.lastHistoryCursorAt
-      ? new Date(state.lastHistoryCursorAt.getTime() - 5 * 60_000)
+      ? new Date(state.lastHistoryCursorAt.getTime() - historyOverlapMs)
       : null
     const { health, snapshot } = await readMt5Bridge(historyFrom)
     const positionTickets = snapshot.positions.map((item) => item.ticket)
@@ -79,14 +84,16 @@ export async function synchronizeMt5() {
       }
       await tx.delete(mt5Orders).where(lt(mt5Orders.lastSeenAt, startedAt))
 
-      for (const deal of snapshot.deals) {
+      if (snapshot.deals.length) {
         await tx
           .insert(mt5Deals)
-          .values({
-            ...deal,
-            orderTicket: deal.orderTicket ?? null,
-            positionTicket: deal.positionTicket ?? null,
-          })
+          .values(
+            snapshot.deals.map((deal) => ({
+              ...deal,
+              orderTicket: deal.orderTicket ?? null,
+              positionTicket: deal.positionTicket ?? null,
+            })),
+          )
           .onConflictDoNothing({ target: mt5Deals.ticket })
       }
       const newestDeal = snapshot.deals.reduce<Date | null>(

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { aggregateMt5PositionHistory, type HistoryDeal } from './mt5-history'
+import { aggregateMt5PositionHistory } from './mt5-history'
+import type { HistoryDeal } from './mt5-history'
 
 function deal(
   values: Partial<HistoryDeal> &
@@ -81,5 +82,19 @@ describe('MT5 position history aggregation', () => {
       realizedNetProfit: '30',
     })
     expect(result[0].exits).toHaveLength(2)
+  })
+
+  it('does not publish an opening-only record as a zero-profit closure', () => {
+    const result = aggregateMt5PositionHistory(
+      [deal({ ticket: '1', entry: 'IN', volume: '0.01', price: '100' })],
+      [],
+    )
+
+    expect(result[0]).toMatchObject({
+      status: 'AWAITING_HISTORY',
+      averageExitPrice: null,
+      realizedNetProfit: '0',
+      closedAt: null,
+    })
   })
 })

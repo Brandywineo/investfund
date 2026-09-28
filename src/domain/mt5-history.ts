@@ -33,7 +33,7 @@ export type PositionHistory = {
   positionTicket: string
   symbol: string
   side: 'BUY' | 'SELL'
-  status: 'OPEN' | 'PARTIALLY_CLOSED' | 'CLOSED'
+  status: 'OPEN' | 'PARTIALLY_CLOSED' | 'CLOSED' | 'AWAITING_HISTORY'
   initialVolume: string
   closedVolume: string
   remainingVolume: string
@@ -124,7 +124,9 @@ export function aggregateMt5PositionHistory(
         ? closedVolume.gt(0)
           ? 'PARTIALLY_CLOSED'
           : 'OPEN'
-        : 'CLOSED'
+        : closings.length > 0
+          ? 'CLOSED'
+          : 'AWAITING_HISTORY'
       return {
         positionTicket,
         symbol: firstOpening.symbol,
@@ -137,7 +139,7 @@ export function aggregateMt5PositionHistory(
         averageExitPrice: averagePrice(ordered, closingEntries),
         realizedNetProfit: realizedNetProfit.toString(),
         openedAt: firstOpening.executedAt,
-        closedAt: live
+        closedAt: live || closings.length === 0
           ? null
           : (lastClosing?.executedAt ?? ordered.at(-1)!.executedAt),
         exits: closings.map((deal) => ({

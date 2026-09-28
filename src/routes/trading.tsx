@@ -1,5 +1,6 @@
 import { createFileRoute, Link, redirect } from '@tanstack/react-router'
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
+import type { ReactNode } from 'react'
 import { currentUser } from '#/server/auth.functions'
 import { getTradingDesk } from '#/server/trading.functions'
 
