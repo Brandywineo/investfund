@@ -7,7 +7,7 @@ method.
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -130,7 +130,11 @@ def orders():
 
 def deals(history_from):
     start = datetime.fromisoformat(history_from or HISTORY_START)
-    end = datetime.now(timezone.utc)
+    # MT5 history boundaries are interpreted against the broker's server time.
+    # Some brokers report execution timestamps ahead of UTC, even though live
+    # terminal state is synchronized immediately. A forward allowance keeps
+    # those genuine executions from being excluded until UTC catches up.
+    end = datetime.now(timezone.utc) + timedelta(days=1)
     rows = mt5.history_deals_get(start, end) or []
     trade_types = {mt5.DEAL_TYPE_BUY: "BUY", mt5.DEAL_TYPE_SELL: "SELL"}
     entry_types = {
