@@ -14,15 +14,20 @@ import { Route as AccountRouteImport } from './routes/account'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AppRouteImport } from './routes/app'
 import { Route as CommunityRouteImport } from './routes/community'
+import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as InvestRouteImport } from './routes/invest'
 import { Route as LedgerRouteImport } from './routes/ledger'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as NotificationsRouteImport } from './routes/notifications'
 import { Route as ReferralsRouteImport } from './routes/referrals'
+import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as TradingRouteImport } from './routes/trading'
+import { Route as VerifyEmailRouteImport } from './routes/verify-email'
+import { Route as VerifyPendingRouteImport } from './routes/verify-pending'
 import { Route as WalletRouteImport } from './routes/wallet'
 import { Route as AdminCustodyRouteImport } from './routes/admin_.custody'
+import { Route as AdminEmailRouteImport } from './routes/admin_.email'
 import { Route as AdminExitsRouteImport } from './routes/admin_.exits'
 import { Route as AdminOperationsRouteImport } from './routes/admin_.operations'
 import { Route as AdminReferralsRouteImport } from './routes/admin_.referrals'
@@ -56,6 +61,11 @@ const CommunityRoute = CommunityRouteImport.update({
   path: '/community',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
+  id: '/forgot-password',
+  path: '/forgot-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const InvestRoute = InvestRouteImport.update({
   id: '/invest',
   path: '/invest',
@@ -81,6 +91,11 @@ const ReferralsRoute = ReferralsRouteImport.update({
   path: '/referrals',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ResetPasswordRoute = ResetPasswordRouteImport.update({
+  id: '/reset-password',
+  path: '/reset-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
   path: '/signup',
@@ -91,6 +106,16 @@ const TradingRoute = TradingRouteImport.update({
   path: '/trading',
   getParentRoute: () => rootRouteImport,
 } as any)
+const VerifyEmailRoute = VerifyEmailRouteImport.update({
+  id: '/verify-email',
+  path: '/verify-email',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const VerifyPendingRoute = VerifyPendingRouteImport.update({
+  id: '/verify-pending',
+  path: '/verify-pending',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const WalletRoute = WalletRouteImport.update({
   id: '/wallet',
   path: '/wallet',
@@ -99,6 +124,11 @@ const WalletRoute = WalletRouteImport.update({
 const AdminCustodyRoute = AdminCustodyRouteImport.update({
   id: '/admin_/custody',
   path: '/admin/custody',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminEmailRoute = AdminEmailRouteImport.update({
+  id: '/admin_/email',
+  path: '/admin/email',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminExitsRoute = AdminExitsRouteImport.update({
@@ -143,15 +173,20 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AdminRoute
   '/app': typeof AppRoute
   '/community': typeof CommunityRoute
+  '/forgot-password': typeof ForgotPasswordRoute
   '/invest': typeof InvestRoute
   '/ledger': typeof LedgerRoute
   '/login': typeof LoginRoute
   '/notifications': typeof NotificationsRoute
   '/referrals': typeof ReferralsRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/trading': typeof TradingRoute
+  '/verify-email': typeof VerifyEmailRoute
+  '/verify-pending': typeof VerifyPendingRoute
   '/wallet': typeof WalletRoute
   '/admin/custody': typeof AdminCustodyRoute
+  '/admin/email': typeof AdminEmailRoute
   '/admin/exits': typeof AdminExitsRoute
   '/admin/operations': typeof AdminOperationsRoute
   '/admin/referrals': typeof AdminReferralsRoute
@@ -166,15 +201,20 @@ export interface FileRoutesByTo {
   '/admin': typeof AdminRoute
   '/app': typeof AppRoute
   '/community': typeof CommunityRoute
+  '/forgot-password': typeof ForgotPasswordRoute
   '/invest': typeof InvestRoute
   '/ledger': typeof LedgerRoute
   '/login': typeof LoginRoute
   '/notifications': typeof NotificationsRoute
   '/referrals': typeof ReferralsRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/trading': typeof TradingRoute
+  '/verify-email': typeof VerifyEmailRoute
+  '/verify-pending': typeof VerifyPendingRoute
   '/wallet': typeof WalletRoute
   '/admin/custody': typeof AdminCustodyRoute
+  '/admin/email': typeof AdminEmailRoute
   '/admin/exits': typeof AdminExitsRoute
   '/admin/operations': typeof AdminOperationsRoute
   '/admin/referrals': typeof AdminReferralsRoute
@@ -190,15 +230,20 @@ export interface FileRoutesById {
   '/admin': typeof AdminRoute
   '/app': typeof AppRoute
   '/community': typeof CommunityRoute
+  '/forgot-password': typeof ForgotPasswordRoute
   '/invest': typeof InvestRoute
   '/ledger': typeof LedgerRoute
   '/login': typeof LoginRoute
   '/notifications': typeof NotificationsRoute
   '/referrals': typeof ReferralsRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/trading': typeof TradingRoute
+  '/verify-email': typeof VerifyEmailRoute
+  '/verify-pending': typeof VerifyPendingRoute
   '/wallet': typeof WalletRoute
   '/admin_/custody': typeof AdminCustodyRoute
+  '/admin_/email': typeof AdminEmailRoute
   '/admin_/exits': typeof AdminExitsRoute
   '/admin_/operations': typeof AdminOperationsRoute
   '/admin_/referrals': typeof AdminReferralsRoute
@@ -215,15 +260,20 @@ export interface FileRouteTypes {
     | '/admin'
     | '/app'
     | '/community'
+    | '/forgot-password'
     | '/invest'
     | '/ledger'
     | '/login'
     | '/notifications'
     | '/referrals'
+    | '/reset-password'
     | '/signup'
     | '/trading'
+    | '/verify-email'
+    | '/verify-pending'
     | '/wallet'
     | '/admin/custody'
+    | '/admin/email'
     | '/admin/exits'
     | '/admin/operations'
     | '/admin/referrals'
@@ -238,15 +288,20 @@ export interface FileRouteTypes {
     | '/admin'
     | '/app'
     | '/community'
+    | '/forgot-password'
     | '/invest'
     | '/ledger'
     | '/login'
     | '/notifications'
     | '/referrals'
+    | '/reset-password'
     | '/signup'
     | '/trading'
+    | '/verify-email'
+    | '/verify-pending'
     | '/wallet'
     | '/admin/custody'
+    | '/admin/email'
     | '/admin/exits'
     | '/admin/operations'
     | '/admin/referrals'
@@ -261,15 +316,20 @@ export interface FileRouteTypes {
     | '/admin'
     | '/app'
     | '/community'
+    | '/forgot-password'
     | '/invest'
     | '/ledger'
     | '/login'
     | '/notifications'
     | '/referrals'
+    | '/reset-password'
     | '/signup'
     | '/trading'
+    | '/verify-email'
+    | '/verify-pending'
     | '/wallet'
     | '/admin_/custody'
+    | '/admin_/email'
     | '/admin_/exits'
     | '/admin_/operations'
     | '/admin_/referrals'
@@ -285,15 +345,20 @@ export interface RootRouteChildren {
   AdminRoute: typeof AdminRoute
   AppRoute: typeof AppRoute
   CommunityRoute: typeof CommunityRoute
+  ForgotPasswordRoute: typeof ForgotPasswordRoute
   InvestRoute: typeof InvestRoute
   LedgerRoute: typeof LedgerRoute
   LoginRoute: typeof LoginRoute
   NotificationsRoute: typeof NotificationsRoute
   ReferralsRoute: typeof ReferralsRoute
+  ResetPasswordRoute: typeof ResetPasswordRoute
   SignupRoute: typeof SignupRoute
   TradingRoute: typeof TradingRoute
+  VerifyEmailRoute: typeof VerifyEmailRoute
+  VerifyPendingRoute: typeof VerifyPendingRoute
   WalletRoute: typeof WalletRoute
   AdminCustodyRoute: typeof AdminCustodyRoute
+  AdminEmailRoute: typeof AdminEmailRoute
   AdminExitsRoute: typeof AdminExitsRoute
   AdminOperationsRoute: typeof AdminOperationsRoute
   AdminReferralsRoute: typeof AdminReferralsRoute
@@ -340,6 +405,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CommunityRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/forgot-password': {
+      id: '/forgot-password'
+      path: '/forgot-password'
+      fullPath: '/forgot-password'
+      preLoaderRoute: typeof ForgotPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/invest': {
       id: '/invest'
       path: '/invest'
@@ -375,6 +447,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReferralsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/reset-password': {
+      id: '/reset-password'
+      path: '/reset-password'
+      fullPath: '/reset-password'
+      preLoaderRoute: typeof ResetPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/signup': {
       id: '/signup'
       path: '/signup'
@@ -389,6 +468,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TradingRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/verify-email': {
+      id: '/verify-email'
+      path: '/verify-email'
+      fullPath: '/verify-email'
+      preLoaderRoute: typeof VerifyEmailRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/verify-pending': {
+      id: '/verify-pending'
+      path: '/verify-pending'
+      fullPath: '/verify-pending'
+      preLoaderRoute: typeof VerifyPendingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/wallet': {
       id: '/wallet'
       path: '/wallet'
@@ -401,6 +494,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/custody'
       fullPath: '/admin/custody'
       preLoaderRoute: typeof AdminCustodyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin_/email': {
+      id: '/admin_/email'
+      path: '/admin/email'
+      fullPath: '/admin/email'
+      preLoaderRoute: typeof AdminEmailRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin_/exits': {
@@ -461,15 +561,20 @@ const rootRouteChildren: RootRouteChildren = {
   AdminRoute: AdminRoute,
   AppRoute: AppRoute,
   CommunityRoute: CommunityRoute,
+  ForgotPasswordRoute: ForgotPasswordRoute,
   InvestRoute: InvestRoute,
   LedgerRoute: LedgerRoute,
   LoginRoute: LoginRoute,
   NotificationsRoute: NotificationsRoute,
   ReferralsRoute: ReferralsRoute,
+  ResetPasswordRoute: ResetPasswordRoute,
   SignupRoute: SignupRoute,
   TradingRoute: TradingRoute,
+  VerifyEmailRoute: VerifyEmailRoute,
+  VerifyPendingRoute: VerifyPendingRoute,
   WalletRoute: WalletRoute,
   AdminCustodyRoute: AdminCustodyRoute,
+  AdminEmailRoute: AdminEmailRoute,
   AdminExitsRoute: AdminExitsRoute,
   AdminOperationsRoute: AdminOperationsRoute,
   AdminReferralsRoute: AdminReferralsRoute,

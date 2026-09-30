@@ -137,6 +137,13 @@ export const operationalEventStatus = pgEnum('operational_event_status', [
   'OPEN',
   'RESOLVED',
 ])
+export const emailProvider = pgEnum('email_provider', ['RESEND'])
+export const emailDeliveryStatus = pgEnum('email_delivery_status', [
+  'PENDING',
+  'PROCESSING',
+  'SENT',
+  'FAILED',
+])
 
 const timestamps = {
   createdAt: timestamp('created_at', { withTimezone: true })
@@ -275,6 +282,58 @@ export const passwordResetTokens = pgTable(
       .notNull(),
   },
   (table) => [index('password_reset_user_idx').on(table.userId)],
+)
+
+export const emailSettings = pgTable('email_settings', {
+  id: integer('id').primaryKey().default(1),
+  provider: emailProvider('provider').default('RESEND').notNull(),
+  enabled: boolean('enabled').default(false).notNull(),
+  verificationRequired: boolean('verification_required')
+    .default(false)
+    .notNull(),
+  encryptedApiKey: text('encrypted_api_key'),
+  apiKeyLastFour: text('api_key_last_four'),
+  fromName: text('from_name').default('InvestFund').notNull(),
+  fromAddress: text('from_address')
+    .default('no-reply@investfund.site')
+    .notNull(),
+  replyToAddress: text('reply_to_address'),
+  verificationExpiryMinutes: integer('verification_expiry_minutes')
+    .default(1440)
+    .notNull(),
+  resetExpiryMinutes: integer('reset_expiry_minutes').default(30).notNull(),
+  updatedBy: uuid('updated_by').references(() => users.id),
+  lastSuccessfulDeliveryAt: timestamp('last_successful_delivery_at', {
+    withTimezone: true,
+  }),
+  lastFailureAt: timestamp('last_failure_at', { withTimezone: true }),
+  lastFailureReason: text('last_failure_reason'),
+  ...timestamps,
+})
+
+export const emailOutbox = pgTable(
+  'email_outbox',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    recipient: text('recipient').notNull(),
+    subject: text('subject').notNull(),
+    htmlBody: text('html_body').notNull(),
+    textBody: text('text_body').notNull(),
+    category: text('category').notNull(),
+    status: emailDeliveryStatus('status').default('PENDING').notNull(),
+    attempts: integer('attempts').default(0).notNull(),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    providerMessageId: text('provider_message_id'),
+    failureReason: text('failure_reason'),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    index('email_outbox_status_next_idx').on(table.status, table.nextAttemptAt),
+    index('email_outbox_created_idx').on(table.createdAt),
+  ],
 )
 
 export const platformSettings = pgTable('platform_settings', {

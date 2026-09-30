@@ -25,7 +25,7 @@ function SignupPage() {
     setError('')
     const form = new FormData(event.currentTarget)
     try {
-      await register({
+      const result = await register({
         data: {
           displayName: String(form.get('displayName')),
           email: String(form.get('email')),
@@ -33,7 +33,14 @@ function SignupPage() {
           referralCode: String(form.get('referralCode') || '') || undefined,
         },
       })
-      await navigate({ to: '/app' })
+      if (result.verificationRequired) {
+        await navigate({
+          to: '/verify-pending',
+          search: { email: result.email },
+        })
+      } else {
+        await navigate({ to: '/app' })
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Registration failed')
     } finally {

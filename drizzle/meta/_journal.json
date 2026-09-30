@@ -148,6 +148,13 @@
       "when": 1790512376730,
       "tag": "0020_dazzling_puff_adder",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790787220974,
+      "tag": "0021_sturdy_spyke",
+      "breakpoints": true
     }
   ]
 }

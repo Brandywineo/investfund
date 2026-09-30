@@ -25,6 +25,7 @@
     "signer:start": "tsx scripts/hd-signer-service.ts",
     "chain:run": "tsx scripts/run-chain-worker.ts",
     "mt5:sync": "tsx scripts/run-mt5-sync.ts",
+    "email:run": "tsx scripts/run-email-worker.ts",
     "push:keys": "tsx scripts/generate-vapid-keys.ts"
   },
   "dependencies": {

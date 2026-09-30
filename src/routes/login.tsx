@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
+import { Link } from '@tanstack/react-router'
 import { AuthField, AuthForm, AuthPage } from '#/components/AuthPage'
 import { currentUser, login } from '#/server/auth.functions'
 
@@ -61,6 +62,14 @@ function LoginPage() {
           type="password"
           autoComplete="current-password"
         />
+        <div className="-mt-2 text-right">
+          <Link
+            to="/forgot-password"
+            className="text-sm font-bold text-[#123d2d]"
+          >
+            Forgot password?
+          </Link>
+        </div>
       </AuthForm>
     </AuthPage>
   )
