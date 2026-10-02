@@ -85,6 +85,12 @@ export async function requestControlledWalletTransferBroadcast(
   )
 }
 
+export async function requestDepositGasRecovery(recoveryId: string) {
+  return transactionResponse.parse(
+    await signerRequest('/recover-deposit-gas', { recoveryId }),
+  )
+}
+
 export async function requestSignedTransactionRebroadcast(
   kind: 'WITHDRAWAL' | 'TREASURY' | 'CONTROLLED',
   recordId: string,

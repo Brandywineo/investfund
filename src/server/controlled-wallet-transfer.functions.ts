@@ -2,12 +2,14 @@ import { createServerFn } from '@tanstack/react-start'
 import { desc } from 'drizzle-orm'
 import { z } from 'zod'
 import { getDb } from '#/db'
-import { hasSufficientHotGas } from '#/domain/chain-worker'
 import {
   controlledWalletTransfers,
+  depositGasRecoveries,
   platformWallets,
   treasuryTransfers,
   treasuryTransactionAttempts,
+  walletAddresses,
+  walletSets,
 } from '#/db/schema'
 import {
   approveControlledWalletTransfer,
@@ -16,6 +18,10 @@ import {
   NATIVE_TRANSFER_FEE_ESTIMATE,
 } from './controlled-wallet-transfer.service'
 import { requestTreasuryGasReplacement } from './signer-api'
+import {
+  getDepositGasRecoveryPreview,
+  queueDepositGasRecovery,
+} from './deposit-gas-recovery.service'
 import { getSessionUser } from './session'
 
 const amountSchema = z
@@ -35,51 +41,79 @@ export const getControlledWalletTransferDashboard = createServerFn({
   method: 'GET',
 }).handler(async () => {
   await requireAdmin()
-  const [wallets, transfers, usdtTransfers, treasuryAttempts] =
-    await Promise.all([
-      getDb().select().from(platformWallets),
-      getDb()
-        .select()
-        .from(controlledWalletTransfers)
-        .orderBy(desc(controlledWalletTransfers.createdAt))
-        .limit(100),
-      getDb()
-        .select()
-        .from(treasuryTransfers)
-        .orderBy(desc(treasuryTransfers.createdAt))
-        .limit(100),
-      getDb()
-        .select()
-        .from(treasuryTransactionAttempts)
-        .orderBy(desc(treasuryTransactionAttempts.createdAt))
-        .limit(200),
-    ])
+  const [
+    wallets,
+    sets,
+    transfers,
+    legacyTransfers,
+    treasuryAttempts,
+    gasPreview,
+    gasRecoveries,
+    addresses,
+  ] = await Promise.all([
+    getDb().select().from(platformWallets),
+    getDb().select().from(walletSets),
+    getDb()
+      .select()
+      .from(controlledWalletTransfers)
+      .orderBy(desc(controlledWalletTransfers.createdAt))
+      .limit(100),
+    getDb()
+      .select()
+      .from(treasuryTransfers)
+      .orderBy(desc(treasuryTransfers.createdAt))
+      .limit(100),
+    getDb()
+      .select()
+      .from(treasuryTransactionAttempts)
+      .orderBy(desc(treasuryTransactionAttempts.createdAt))
+      .limit(200),
+    getDepositGasRecoveryPreview(),
+    getDb()
+      .select()
+      .from(depositGasRecoveries)
+      .orderBy(desc(depositGasRecoveries.createdAt))
+      .limit(100),
+    getDb().select().from(walletAddresses),
+  ])
   return {
     wallets,
+    walletSets: sets,
     transfers,
-    usdtTransfers: usdtTransfers.filter(
+    legacyTransfers: legacyTransfers.filter(
       (transfer) => transfer.direction === 'OUTBOUND',
     ),
     treasuryAttempts,
+    gasPreview,
+    gasRecoveries,
+    walletAddresses: addresses,
     estimatedNativeFeeBnb: NATIVE_TRANSFER_FEE_ESTIMATE,
     recommendedSweepReserveBnb:
       process.env.RECOMMENDED_SWEEP_GAS_RESERVE_BNB ?? '0.001',
-    hotWalletHasGas: hasSufficientHotGas(
-      wallets.find((wallet) => wallet.role === 'HOT_WITHDRAWAL')
-        ?.nativeBalance ?? '0',
-      process.env.MIN_HOT_GAS_BNB ?? '0.00002',
-    ),
+    minimumHotGasBnb: process.env.MIN_HOT_GAS_BNB ?? '0.00002',
   }
 })
 
 export const draftControlledWalletTransfer = createServerFn({ method: 'POST' })
   .validator(
     z.object({
-      sourceRole: z.enum(['HOT_WITHDRAWAL', 'SWEEP_GAS']),
+      sourcePlatformWalletId: z.string().uuid(),
       destinationType: z.enum(['INTERNAL', 'EXTERNAL']),
+      destinationPlatformWalletId: z.string().uuid().optional(),
       destinationAddress: z.string().trim().max(160).optional(),
+      asset: z.enum(['BNB', 'USDT']),
       amount: amountSchema,
       reason: z.string().trim().min(3).max(250),
+      purpose: z
+        .enum([
+          'WALLET_REBALANCING',
+          'MT5_CAPITAL',
+          'ADMIN_RESERVE',
+          'WITHDRAWAL_LIQUIDITY',
+          'OPERATIONS',
+          'OTHER',
+        ])
+        .default('WALLET_REBALANCING'),
     }),
   )
   .handler(async ({ data }) => {
@@ -89,6 +123,16 @@ export const draftControlledWalletTransfer = createServerFn({ method: 'POST' })
       actorUserId: admin.id,
     })
     return { success: true, transferId: transfer.id }
+  })
+
+export const queueDepositGasRecoveryAction = createServerFn({ method: 'POST' })
+  .validator(z.object({ walletSetId: z.string().uuid().optional() }))
+  .handler(async ({ data }) => {
+    const admin = await requireAdmin()
+    return queueDepositGasRecovery({
+      walletSetId: data.walletSetId,
+      actorUserId: admin.id,
+    })
   })
 
 export const reviewControlledWalletTransfer = createServerFn({ method: 'POST' })

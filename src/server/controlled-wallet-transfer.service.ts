@@ -16,26 +16,33 @@ export const NATIVE_TRANSFER_FEE_ESTIMATE =
   process.env.ESTIMATED_NATIVE_TRANSFER_GAS_BNB ?? '0.00001'
 
 export async function createControlledWalletTransfer(input: {
-  sourceRole: 'HOT_WITHDRAWAL' | 'SWEEP_GAS'
+  sourcePlatformWalletId: string
   destinationType: 'INTERNAL' | 'EXTERNAL'
+  destinationPlatformWalletId?: string
   destinationAddress?: string
+  asset: 'BNB' | 'USDT'
   amount: string
   reason: string
+  purpose: string
   actorUserId: string
 }) {
   return getDb().transaction(async (tx) => {
     const wallets = await tx.select().from(platformWallets)
-    const source = wallets.find((wallet) => wallet.role === input.sourceRole)
+    const source = wallets.find(
+      (wallet) => wallet.id === input.sourcePlatformWalletId,
+    )
     if (!source) throw new Error('Source platform wallet is not initialized')
-    const destinationRole =
+    const internalDestination =
       input.destinationType === 'INTERNAL'
-        ? input.sourceRole === 'SWEEP_GAS'
-          ? ('HOT_WITHDRAWAL' as const)
-          : ('SWEEP_GAS' as const)
+        ? wallets.find(
+            (wallet) => wallet.id === input.destinationPlatformWalletId,
+          )
         : null
-    const internalDestination = destinationRole
-      ? wallets.find((wallet) => wallet.role === destinationRole)
-      : null
+    if (input.destinationType === 'INTERNAL' && !internalDestination)
+      throw new Error('Select a controlled destination wallet')
+    if (internalDestination?.id === source.id)
+      throw new Error('Source and destination wallets must be different')
+    const destinationRole = internalDestination?.role ?? null
     const destinationAddress =
       internalDestination?.address ?? input.destinationAddress?.trim() ?? ''
     if (!isAddress(destinationAddress))
@@ -50,13 +57,13 @@ export async function createControlledWalletTransfer(input: {
       throw new Error('Use an internal transfer for a platform wallet')
 
     validateWalletTransferRoute({
-      sourceRole: input.sourceRole,
+      sourceRole: source.role,
       destinationType: input.destinationType,
       destinationRole,
-      asset: 'BNB',
+      asset: input.asset,
     })
     ensureTransferBalance({
-      asset: 'BNB',
+      asset: input.asset,
       amount: input.amount,
       assetBalance: source.tokenBalance,
       nativeBalance: source.nativeBalance,
@@ -65,13 +72,16 @@ export async function createControlledWalletTransfer(input: {
     const transfer = await tx
       .insert(controlledWalletTransfers)
       .values({
-        sourceRole: input.sourceRole,
+        sourcePlatformWalletId: source.id,
+        sourceRole: source.role,
         destinationType: input.destinationType,
+        destinationPlatformWalletId: internalDestination?.id,
         destinationRole,
         destinationAddress,
-        asset: 'BNB',
+        asset: input.asset,
         amount: money(input.amount).toString(),
         reason: input.reason,
+        purpose: input.purpose,
         createdBy: input.actorUserId,
       })
       .returning()
@@ -84,8 +94,10 @@ export async function createControlledWalletTransfer(input: {
       entityId: transfer.id,
       after: {
         sourceRole: transfer.sourceRole,
+        sourcePlatformWalletId: source.id,
         destinationType: transfer.destinationType,
         destinationRole: transfer.destinationRole,
+        destinationPlatformWalletId: internalDestination?.id,
         destinationAddress: transfer.destinationAddress,
         asset: transfer.asset,
         amount: transfer.amount,
@@ -112,15 +124,22 @@ export async function approveControlledWalletTransfer(
       .then((rows) => rows.at(0))
     if (!transfer || transfer.status !== 'DRAFTED')
       throw new Error('Draft wallet transfer not found')
-    const source = await tx
-      .select()
-      .from(platformWallets)
-      .where(eq(platformWallets.role, transfer.sourceRole))
-      .limit(1)
-      .then((rows) => rows.at(0))
+    const source = transfer.sourcePlatformWalletId
+      ? await tx
+          .select()
+          .from(platformWallets)
+          .where(eq(platformWallets.id, transfer.sourcePlatformWalletId))
+          .limit(1)
+          .then((rows) => rows.at(0))
+      : await tx
+          .select()
+          .from(platformWallets)
+          .where(eq(platformWallets.role, transfer.sourceRole))
+          .limit(1)
+          .then((rows) => rows.at(0))
     if (!source) throw new Error('Source platform wallet is not initialized')
     ensureTransferBalance({
-      asset: 'BNB',
+      asset: transfer.asset as 'BNB' | 'USDT',
       amount: transfer.amount,
       assetBalance: source.tokenBalance,
       nativeBalance: source.nativeBalance,

@@ -15,6 +15,7 @@ import { getDb } from '../src/db'
 import {
   custodySettings,
   controlledWalletTransfers,
+  depositGasRecoveries,
   platformWallets,
   walletSets,
   walletAddresses,
@@ -105,6 +106,22 @@ async function runtimeForWalletSetId(walletSetId: string) {
   const runtime = set && walletRuntimes.get(set.signerKey)
   if (!runtime) throw new Error('Wallet set is not loaded by the signer')
   return runtime
+}
+
+async function signerWalletForPlatformWallet(platformWalletId: string) {
+  const wallet = await getDb()
+    .select()
+    .from(platformWallets)
+    .where(eq(platformWallets.id, platformWalletId))
+    .limit(1)
+    .then((rows) => rows.at(0))
+  if (!wallet) throw new Error('Controlled platform wallet was not found')
+  const runtime = await runtimeForWalletSetId(wallet.walletSetId)
+  const signer =
+    wallet.role === 'HOT_WITHDRAWAL' ? runtime.hotWallet : runtime.gasWallet
+  if (signer.address.toLowerCase() !== wallet.address.toLowerCase())
+    throw new Error('Platform wallet does not match the configured signer')
+  return { wallet, runtime, signer }
 }
 
 async function signTokenTransfer(
@@ -215,8 +232,8 @@ async function controlledTransfer(transferId: string) {
     .then((rows) => rows.at(0))
   if (!transfer || !['APPROVED', 'PROCESSING'].includes(transfer.status))
     throw new Error('Approved or processing controlled transfer not found')
-  if (transfer.asset !== 'BNB')
-    throw new Error('Controlled signer transfer only supports BNB')
+  if (!['BNB', 'USDT'].includes(transfer.asset))
+    throw new Error('Controlled transfer asset is not supported')
   if (!isAddress(transfer.destinationAddress))
     throw new Error('Controlled transfer destination is invalid')
   validateWalletTransferRoute({
@@ -225,55 +242,92 @@ async function controlledTransfer(transferId: string) {
     destinationRole: transfer.destinationRole,
     asset: 'BNB',
   })
-  const source =
-    transfer.sourceRole === 'HOT_WITHDRAWAL' ? hotWallet : gasWallet
-  const expectedInternalDestination =
-    transfer.sourceRole === 'HOT_WITHDRAWAL'
-      ? gasWallet.address
-      : hotWallet.address
-  if (
-    transfer.destinationType === 'INTERNAL' &&
-    transfer.destinationAddress.toLowerCase() !==
-      expectedInternalDestination.toLowerCase()
-  )
-    throw new Error('Internal destination does not match the controlled wallet')
+  const sourceRecord = transfer.sourcePlatformWalletId
+    ? await signerWalletForPlatformWallet(transfer.sourcePlatformWalletId)
+    : {
+        wallet: null,
+        runtime: primaryRuntime,
+        signer:
+          transfer.sourceRole === 'HOT_WITHDRAWAL' ? hotWallet : gasWallet,
+      }
+  const source = sourceRecord.signer
+  if (transfer.destinationType === 'INTERNAL') {
+    if (!transfer.destinationPlatformWalletId)
+      throw new Error('Internal destination wallet is missing')
+    const destination = await getDb()
+      .select()
+      .from(platformWallets)
+      .where(eq(platformWallets.id, transfer.destinationPlatformWalletId))
+      .limit(1)
+      .then((rows) => rows.at(0))
+    if (
+      !destination ||
+      destination.address.toLowerCase() !==
+        transfer.destinationAddress.toLowerCase()
+    )
+      throw new Error(
+        'Internal destination does not match the controlled wallet',
+      )
+  }
 
   const originalStatus = transfer.status
   try {
     if (transfer.status === 'APPROVED') {
-      const value = parseUnits(transfer.amount, 18)
-      const [network, fee, nonce, balance] = await Promise.all([
-        provider.getNetwork(),
-        provider.getFeeData(),
-        provider.getTransactionCount(source.address, 'pending'),
-        provider.getBalance(source.address),
-      ])
-      const gasPrice = fee.gasPrice ?? fee.maxFeePerGas
-      if (!gasPrice) throw new Error('Could not determine network gas price')
-      const gasLimit = await provider.estimateGas({
-        from: source.address,
-        to: transfer.destinationAddress,
-        value,
-      })
-      const bufferedGasLimit = (gasLimit * 125n) / 100n
-      if (value + bufferedGasLimit * gasPrice > balance)
-        throw new Error('BNB balance is insufficient after network gas')
-      const signedTransaction = await source.signTransaction({
-        to: transfer.destinationAddress,
-        value,
-        chainId: network.chainId,
-        nonce,
-        gasLimit: bufferedGasLimit,
-        gasPrice,
-      })
-      const txHash = keccak256(signedTransaction)
+      let signed: { nonce: number; signedTransaction: string; txHash: string }
+      if (transfer.asset === 'USDT') {
+        const settings = await db
+          .select()
+          .from(custodySettings)
+          .where(eq(custodySettings.id, 1))
+          .limit(1)
+          .then((rows) => rows.at(0))
+        if (!settings?.tokenContractAddress)
+          throw new Error('USDT contract is not configured')
+        signed = await signTokenTransfer(
+          settings.tokenContractAddress,
+          transfer.destinationAddress,
+          transfer.amount,
+          source,
+        )
+      } else {
+        const value = parseUnits(transfer.amount, 18)
+        const [network, fee, nonce, balance] = await Promise.all([
+          provider.getNetwork(),
+          provider.getFeeData(),
+          provider.getTransactionCount(source.address, 'pending'),
+          provider.getBalance(source.address),
+        ])
+        const gasPrice = fee.gasPrice ?? fee.maxFeePerGas
+        if (!gasPrice) throw new Error('Could not determine network gas price')
+        const gasLimit = await provider.estimateGas({
+          from: source.address,
+          to: transfer.destinationAddress,
+          value,
+        })
+        const bufferedGasLimit = (gasLimit * 125n) / 100n
+        if (value + bufferedGasLimit * gasPrice > balance)
+          throw new Error('BNB balance is insufficient after network gas')
+        const signedTransaction = await source.signTransaction({
+          to: transfer.destinationAddress,
+          value,
+          chainId: network.chainId,
+          nonce,
+          gasLimit: bufferedGasLimit,
+          gasPrice,
+        })
+        signed = {
+          nonce,
+          signedTransaction,
+          txHash: keccak256(signedTransaction),
+        }
+      }
       transfer = await db
         .update(controlledWalletTransfers)
         .set({
           status: 'PROCESSING',
-          signedTransaction,
-          chainNonce: nonce,
-          txHash,
+          signedTransaction: signed.signedTransaction,
+          chainNonce: signed.nonce,
+          txHash: signed.txHash,
           updatedAt: new Date(),
         })
         .where(
@@ -298,10 +352,143 @@ async function controlledTransfer(transferId: string) {
         .set({
           status: 'FAILED',
           failureReason:
-            cause instanceof Error ? cause.message : 'BNB transfer failed',
+            cause instanceof Error
+              ? cause.message
+              : 'Controlled wallet transfer failed',
           updatedAt: new Date(),
         })
         .where(eq(controlledWalletTransfers.id, transferId))
+    throw cause
+  }
+}
+
+async function recoverDepositGas(recoveryId: string) {
+  const db = getDb()
+  let recovery = await db
+    .select()
+    .from(depositGasRecoveries)
+    .where(eq(depositGasRecoveries.id, recoveryId))
+    .limit(1)
+    .then((rows) => rows.at(0))
+  if (!recovery || !['APPROVED', 'PROCESSING'].includes(recovery.status))
+    throw new Error('Approved deposit gas recovery was not found')
+  const [addressRow, destination] = await Promise.all([
+    db
+      .select()
+      .from(walletAddresses)
+      .where(eq(walletAddresses.id, recovery.walletAddressId))
+      .limit(1)
+      .then((rows) => rows.at(0)),
+    db
+      .select()
+      .from(platformWallets)
+      .where(eq(platformWallets.id, recovery.destinationPlatformWalletId))
+      .limit(1)
+      .then((rows) => rows.at(0)),
+  ])
+  if (!addressRow || !['ACTIVE', 'ROTATED'].includes(addressRow.status))
+    throw new Error('Monitored deposit address was not found')
+  if (
+    !destination ||
+    destination.walletSetId !== addressRow.walletSetId ||
+    destination.role !== 'SWEEP_GAS'
+  )
+    throw new Error('Recovery destination is not the matching sweep-fee wallet')
+  const runtime = await runtimeForWalletSetId(addressRow.walletSetId)
+  const child = runtime.root
+    .derivePath(`0/${addressRow.derivationIndex}`)
+    .connect(provider)
+  if (child.address.toLowerCase() !== addressRow.address.toLowerCase())
+    throw new Error('Stored deposit address does not match the HD wallet')
+
+  try {
+    if (recovery.status === 'APPROVED') {
+      const [network, feeData, nonce, balance] = await Promise.all([
+        provider.getNetwork(),
+        provider.getFeeData(),
+        provider.getTransactionCount(child.address, 'pending'),
+        provider.getBalance(child.address),
+      ])
+      const gasPrice = feeData.gasPrice ?? feeData.maxFeePerGas
+      if (!gasPrice) throw new Error('Could not determine network gas price')
+      const gasLimit = 21_000n
+      const networkFee = gasLimit * gasPrice
+      const minimum = parseUnits(
+        process.env.BNB_DUST_RECOVERY_MIN ?? '0.000001',
+        18,
+      )
+      if (balance <= networkFee + minimum) {
+        await db
+          .update(depositGasRecoveries)
+          .set({
+            status: 'SKIPPED',
+            balanceBefore: formatUnits(balance, 18),
+            networkFee: formatUnits(networkFee, 18),
+            failureReason: 'Balance is below the economic recovery threshold',
+            updatedAt: new Date(),
+          })
+          .where(eq(depositGasRecoveries.id, recovery.id))
+        return { txHash: 'SKIPPED', amount: '0' }
+      }
+      const value = balance - networkFee
+      const signedTransaction = await child.signTransaction({
+        to: destination.address,
+        value,
+        chainId: network.chainId,
+        nonce,
+        gasLimit,
+        gasPrice,
+      })
+      const txHash = keccak256(signedTransaction)
+      recovery = await db
+        .update(depositGasRecoveries)
+        .set({
+          status: 'PROCESSING',
+          balanceBefore: formatUnits(balance, 18),
+          recoveredAmount: formatUnits(value, 18),
+          networkFee: formatUnits(networkFee, 18),
+          signedTransaction,
+          chainNonce: nonce,
+          txHash,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(depositGasRecoveries.id, recovery.id),
+            eq(depositGasRecoveries.status, 'APPROVED'),
+          ),
+        )
+        .returning()
+        .then((rows) => rows.at(0))
+      if (!recovery) throw new Error('Recovery is already being processed')
+    }
+    if (!recovery.signedTransaction || !recovery.txHash)
+      throw new Error('Processing recovery has no signed transaction')
+    await safelyBroadcast(recovery.signedTransaction, recovery.txHash)
+    await db
+      .update(depositGasRecoveries)
+      .set({
+        status: 'BROADCAST',
+        broadcastAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(depositGasRecoveries.id, recovery.id))
+    return {
+      txHash: recovery.txHash,
+      amount: recovery.recoveredAmount ?? '0',
+    }
+  } catch (cause) {
+    await db
+      .update(depositGasRecoveries)
+      .set({
+        status: 'FAILED',
+        failureReason:
+          cause instanceof Error
+            ? cause.message
+            : 'Deposit gas recovery failed',
+        updatedAt: new Date(),
+      })
+      .where(eq(depositGasRecoveries.id, recoveryId))
     throw cause
   }
 }
@@ -760,6 +947,11 @@ const server = createServer(async (request, response) => {
       request.url === '/controlled-transfer'
     ) {
       result = await controlledTransfer(String(body.transferId))
+    } else if (
+      request.method === 'POST' &&
+      request.url === '/recover-deposit-gas'
+    ) {
+      result = await recoverDepositGas(String(body.recoveryId))
     } else if (request.method === 'POST' && request.url === '/rebroadcast') {
       const kind = String(body.kind)
       if (!['WITHDRAWAL', 'TREASURY', 'CONTROLLED'].includes(kind))

@@ -10,25 +10,9 @@ export function validateWalletTransferRoute(input: {
   destinationRole?: PlatformWalletRole | null
   asset: WalletTransferAsset
 }) {
-  if (input.sourceRole === 'SWEEP_GAS') {
-    if (
-      input.asset !== 'BNB' ||
-      input.destinationType !== 'INTERNAL' ||
-      input.destinationRole !== 'HOT_WITHDRAWAL'
-    )
-      throw new Error(
-        'The sweep-fee wallet can only send BNB to the hot wallet',
-      )
-    return
-  }
-  if (input.destinationType === 'INTERNAL') {
-    if (input.asset !== 'BNB' || input.destinationRole !== 'SWEEP_GAS')
-      throw new Error(
-        'Internal hot-wallet transfers must send BNB to sweep gas',
-      )
-    return
-  }
-  if (input.destinationRole)
+  if (input.destinationType === 'INTERNAL' && !input.destinationRole)
+    throw new Error('An internal transfer requires a platform destination')
+  if (input.destinationType === 'EXTERNAL' && input.destinationRole)
     throw new Error(
       'An external transfer cannot have a platform destination role',
     )

@@ -104,6 +104,14 @@ export const controlledWalletTransferStatus = pgEnum(
     'CANCELLED',
   ],
 )
+export const depositGasRecoveryStatus = pgEnum('deposit_gas_recovery_status', [
+  'APPROVED',
+  'PROCESSING',
+  'BROADCAST',
+  'CONFIRMED',
+  'SKIPPED',
+  'FAILED',
+])
 export const tradingPositionStatus = pgEnum('trading_position_status', [
   'OPEN',
   'CLOSED',
@@ -1106,13 +1114,21 @@ export const controlledWalletTransfers = pgTable(
   'controlled_wallet_transfers',
   {
     id: uuid('id').defaultRandom().primaryKey(),
+    sourcePlatformWalletId: uuid('source_platform_wallet_id').references(
+      () => platformWallets.id,
+      { onDelete: 'restrict' },
+    ),
     sourceRole: platformWalletRole('source_role').notNull(),
     destinationType: text('destination_type').notNull(),
+    destinationPlatformWalletId: uuid(
+      'destination_platform_wallet_id',
+    ).references(() => platformWallets.id, { onDelete: 'restrict' }),
     destinationRole: platformWalletRole('destination_role'),
     destinationAddress: text('destination_address').notNull(),
     asset: text('asset').notNull(),
     amount: numeric('amount', { precision: 30, scale: 18 }).notNull(),
     reason: text('reason').notNull(),
+    purpose: text('purpose').default('WALLET_REBALANCING').notNull(),
     status: controlledWalletTransferStatus('status')
       .default('DRAFTED')
       .notNull(),
@@ -1144,24 +1160,51 @@ export const controlledWalletTransfers = pgTable(
       'controlled_wallet_transfer_asset',
       sql`${table.asset} in ('BNB', 'USDT')`,
     ),
-    check(
-      'controlled_wallet_transfer_route',
-      sql`(
-        ${table.sourceRole} = 'SWEEP_GAS'
-        and ${table.asset} = 'BNB'
-        and ${table.destinationType} = 'INTERNAL'
-        and ${table.destinationRole} = 'HOT_WITHDRAWAL'
-      ) or (
-        ${table.sourceRole} = 'HOT_WITHDRAWAL'
-        and ${table.destinationType} = 'INTERNAL'
-        and ${table.destinationRole} = 'SWEEP_GAS'
-        and ${table.asset} = 'BNB'
-      ) or (
-        ${table.sourceRole} = 'HOT_WITHDRAWAL'
-        and ${table.destinationType} = 'EXTERNAL'
-        and ${table.destinationRole} is null
-      )`,
+    index('controlled_wallet_transfers_source_idx').on(
+      table.sourcePlatformWalletId,
+      table.createdAt,
     ),
+  ],
+)
+
+export const depositGasRecoveries = pgTable(
+  'deposit_gas_recoveries',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    walletAddressId: uuid('wallet_address_id')
+      .references(() => walletAddresses.id, { onDelete: 'restrict' })
+      .notNull(),
+    destinationPlatformWalletId: uuid('destination_platform_wallet_id')
+      .references(() => platformWallets.id, { onDelete: 'restrict' })
+      .notNull(),
+    balanceBefore: numeric('balance_before', { precision: 30, scale: 18 }),
+    recoveredAmount: numeric('recovered_amount', {
+      precision: 30,
+      scale: 18,
+    }),
+    networkFee: numeric('network_fee', { precision: 30, scale: 18 }),
+    status: depositGasRecoveryStatus('status').default('APPROVED').notNull(),
+    requestedBy: uuid('requested_by')
+      .references(() => users.id, { onDelete: 'restrict' })
+      .notNull(),
+    signedTransaction: text('signed_transaction'),
+    chainNonce: integer('chain_nonce'),
+    txHash: text('tx_hash'),
+    broadcastAt: timestamp('broadcast_at', { withTimezone: true }),
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+    failureReason: text('failure_reason'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('deposit_gas_recoveries_tx_hash_unique').on(table.txHash),
+    index('deposit_gas_recoveries_status_idx').on(table.status),
+    index('deposit_gas_recoveries_address_idx').on(
+      table.walletAddressId,
+      table.createdAt,
+    ),
+    uniqueIndex('deposit_gas_recoveries_active_address_unique')
+      .on(table.walletAddressId)
+      .where(sql`${table.status} in ('APPROVED', 'PROCESSING', 'BROADCAST')`),
   ],
 )
 

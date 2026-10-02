@@ -15,6 +15,7 @@ import { classifyDepositTransfer } from '#/domain/deposit-transfer'
 import {
   chainWatcherState,
   controlledWalletTransfers,
+  depositGasRecoveries,
   custodySettings,
   deposits,
   platformWallets,
@@ -38,6 +39,7 @@ import {
   getSignerPlatformWallets,
   requestTreasuryBroadcast,
   requestControlledWalletTransferBroadcast,
+  requestDepositGasRecovery,
   requestSignedTransactionRebroadcast,
   requestWalletSweep,
   requestWithdrawalBroadcast,
@@ -497,6 +499,28 @@ async function runChainWorkerBatch() {
         )
           await requestSignedTransactionRebroadcast('CONTROLLED', transfer.id)
       }
+      const broadcastRecoveries = await db
+        .select({
+          id: depositGasRecoveries.id,
+          txHash: depositGasRecoveries.txHash,
+        })
+        .from(depositGasRecoveries)
+        .where(eq(depositGasRecoveries.status, 'BROADCAST'))
+      for (const recovery of broadcastRecoveries) {
+        if (!recovery.txHash) continue
+        const receipt = await transactionReceipt(recovery.txHash)
+        if (!receipt) continue
+        await db
+          .update(depositGasRecoveries)
+          .set({
+            status: receipt.status === 1 ? 'CONFIRMED' : 'FAILED',
+            confirmedAt: receipt.status === 1 ? new Date() : null,
+            failureReason:
+              receipt.status === 1 ? null : 'On-chain transaction reverted',
+            updatedAt: new Date(),
+          })
+          .where(eq(depositGasRecoveries.id, recovery.id))
+      }
     }
 
     const [
@@ -504,6 +528,7 @@ async function runChainWorkerBatch() {
       knownWithdrawals,
       knownTreasury,
       knownControlledTransfers,
+      knownGasRecoveries,
       recordedGasSweeps,
     ] = await Promise.all([
       db
@@ -531,6 +556,12 @@ async function runChainWorkerBatch() {
         })
         .from(controlledWalletTransfers),
       db
+        .select({
+          id: depositGasRecoveries.id,
+          txHash: depositGasRecoveries.txHash,
+        })
+        .from(depositGasRecoveries),
+      db
         .select({ relatedId: platformWalletTransactions.relatedId })
         .from(platformWalletTransactions)
         .where(
@@ -557,6 +588,11 @@ async function runChainWorkerBatch() {
     )
     const controlledTransferByHash = new Map(
       knownControlledTransfers
+        .filter((row) => row.txHash)
+        .map((row) => [row.txHash!.toLowerCase(), row]),
+    )
+    const gasRecoveryByHash = new Map(
+      knownGasRecoveries
         .filter((row) => row.txHash)
         .map((row) => [row.txHash!.toLowerCase(), row]),
     )
@@ -603,6 +639,7 @@ async function runChainWorkerBatch() {
             const knownSweep = sweepByHash.get(txHash)
             const knownWithdrawal = withdrawalByHash.get(txHash)
             const knownTransfer = treasuryByHash.get(txHash)
+            const knownControlledTransfer = controlledTransferByHash.get(txHash)
             const relation = knownSweep
               ? {
                   classification: 'USER_SWEEP',
@@ -624,23 +661,29 @@ async function runChainWorkerBatch() {
                       relatedType: 'treasury_transfer',
                       relatedId: knownTransfer.id,
                     }
-                  : {
-                      classification:
-                        direction === 'INCOMING' &&
-                        classifyDepositTransfer({
-                          rawValue,
-                          tokenDecimals: decimals,
-                          minimumCreditedAmount:
-                            settings.minimumCreditedDepositAmount,
-                        }) === 'DUST'
-                          ? 'DUST'
-                          : direction === 'INCOMING' &&
-                              wallet.role === 'SWEEP_GAS'
-                            ? 'GAS_TOP_UP'
-                            : null,
-                      relatedType: null,
-                      relatedId: null,
-                    }
+                  : knownControlledTransfer
+                    ? {
+                        classification: 'CONTROLLED_WALLET_TRANSFER',
+                        relatedType: 'controlled_wallet_transfer',
+                        relatedId: knownControlledTransfer.id,
+                      }
+                    : {
+                        classification:
+                          direction === 'INCOMING' &&
+                          classifyDepositTransfer({
+                            rawValue,
+                            tokenDecimals: decimals,
+                            minimumCreditedAmount:
+                              settings.minimumCreditedDepositAmount,
+                          }) === 'DUST'
+                            ? 'DUST'
+                            : direction === 'INCOMING' &&
+                                wallet.role === 'SWEEP_GAS'
+                              ? 'GAS_TOP_UP'
+                              : null,
+                        relatedType: null,
+                        relatedId: null,
+                      }
             const inserted = await db
               .insert(platformWalletTransactions)
               .values({
@@ -705,14 +748,19 @@ async function runChainWorkerBatch() {
               const knownControlledTransfer = controlledTransferByHash.get(
                 transaction.hash.toLowerCase(),
               )
+              const knownGasRecovery = gasRecoveryByHash.get(
+                transaction.hash.toLowerCase(),
+              )
               const classification = knownGasSweep
                 ? 'SWEEP_GAS'
                 : knownControlledTransfer
                   ? 'CONTROLLED_WALLET_TRANSFER'
-                  : match.direction === 'INCOMING' &&
-                      match.wallet.role === 'SWEEP_GAS'
-                    ? 'GAS_TOP_UP'
-                    : null
+                  : knownGasRecovery
+                    ? 'DEPOSIT_GAS_RECOVERY'
+                    : match.direction === 'INCOMING' &&
+                        match.wallet.role === 'SWEEP_GAS'
+                      ? 'GAS_TOP_UP'
+                      : null
               const inserted = await db
                 .insert(platformWalletTransactions)
                 .values({
@@ -737,9 +785,14 @@ async function runChainWorkerBatch() {
                     ? 'wallet_sweep'
                     : knownControlledTransfer
                       ? 'controlled_wallet_transfer'
-                      : null,
+                      : knownGasRecovery
+                        ? 'deposit_gas_recovery'
+                        : null,
                   relatedId:
-                    knownGasSweep?.id ?? knownControlledTransfer?.id ?? null,
+                    knownGasSweep?.id ??
+                    knownControlledTransfer?.id ??
+                    knownGasRecovery?.id ??
+                    null,
                 })
                 .onConflictDoNothing()
                 .returning({ id: platformWalletTransactions.id })
@@ -1070,6 +1123,18 @@ async function runChainWorkerBatch() {
         controlledTransfersBroadcast += 1
       } catch (cause) {
         console.error(`Controlled transfer ${transfer.id} failed`, cause)
+      }
+    }
+
+    const approvedGasRecoveries = await db
+      .select({ id: depositGasRecoveries.id })
+      .from(depositGasRecoveries)
+      .where(inArray(depositGasRecoveries.status, ['APPROVED', 'PROCESSING']))
+    for (const recovery of approvedGasRecoveries) {
+      try {
+        await requestDepositGasRecovery(recovery.id)
+      } catch (cause) {
+        console.error(`Deposit gas recovery ${recovery.id} failed`, cause)
       }
     }
 

@@ -16,14 +16,24 @@ describe('controlled wallet transfer policy', () => {
     ).not.toThrow()
   })
 
-  it('blocks arbitrary sweep-fee wallet destinations', () => {
+  it('allows a sweep-fee wallet to send externally when explicitly selected', () => {
     expect(() =>
       validateWalletTransferRoute({
         sourceRole: 'SWEEP_GAS',
         destinationType: 'EXTERNAL',
         asset: 'BNB',
       }),
-    ).toThrow('only send BNB to the hot wallet')
+    ).not.toThrow()
+  })
+
+  it('requires an internal platform destination', () => {
+    expect(() =>
+      validateWalletTransferRoute({
+        sourceRole: 'HOT_WITHDRAWAL',
+        destinationType: 'INTERNAL',
+        asset: 'USDT',
+      }),
+    ).toThrow('requires a platform destination')
   })
 
   it('reserves gas when calculating BNB spendability', () => {
