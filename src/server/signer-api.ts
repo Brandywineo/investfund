@@ -1,10 +1,20 @@
 import { z } from 'zod'
 
-const addressResponse = z.object({ address: z.string(), index: z.number() })
+const addressResponse = z.object({
+  address: z.string(),
+  index: z.number(),
+  signerKey: z.string(),
+})
 const transactionResponse = z.object({ txHash: z.string(), amount: z.string() })
 const platformWalletsResponse = z.object({
-  hot: z.object({ address: z.string(), derivationPath: z.string() }),
-  gas: z.object({ address: z.string(), derivationPath: z.string() }),
+  walletSets: z.array(
+    z.object({
+      signerKey: z.string(),
+      fingerprint: z.string(),
+      hot: z.object({ address: z.string(), derivationPath: z.string() }),
+      gas: z.object({ address: z.string(), derivationPath: z.string() }),
+    }),
+  ),
 })
 
 async function signerRequest(path: string, body: Record<string, unknown>) {
@@ -30,8 +40,10 @@ async function signerRequest(path: string, body: Record<string, unknown>) {
   return payload
 }
 
-export async function deriveDepositAddress(index: number) {
-  return addressResponse.parse(await signerRequest('/derive', { index }))
+export async function deriveDepositAddress(index: number, signerKey: string) {
+  return addressResponse.parse(
+    await signerRequest('/derive', { index, signerKey }),
+  )
 }
 
 export async function getSignerPlatformWallets() {

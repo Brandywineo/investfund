@@ -6,6 +6,7 @@ import {
   deposits,
   ledgerAccounts,
   ledgerEntries,
+  platformWallets,
   referralRelationships,
   treasuryTransfers,
   users,
@@ -273,6 +274,7 @@ export async function recordAdminConfirmedDeposit(input: {
 export async function approveWithdrawal(
   withdrawalId: string,
   actorUserId: string,
+  sourcePlatformWalletId: string,
 ) {
   return getDb().transaction(async (tx) => {
     await tx.execute(
@@ -286,6 +288,16 @@ export async function approveWithdrawal(
       .then((rows) => rows.at(0))
     if (!withdrawal || withdrawal.status !== 'REQUESTED')
       throw new Error('Requested withdrawal not found')
+    const sourceWallet = await tx
+      .select()
+      .from(platformWallets)
+      .where(eq(platformWallets.id, sourcePlatformWalletId))
+      .limit(1)
+      .then((rows) => rows.at(0))
+    if (!sourceWallet || sourceWallet.role !== 'HOT_WITHDRAWAL')
+      throw new Error('Select a valid hot wallet as the withdrawal source')
+    if (money(sourceWallet.tokenBalance).lessThan(withdrawal.netAmount))
+      throw new Error('Selected hot wallet has insufficient USDT liquidity')
     const hotWallet = await account(tx, 'PLATFORM:HOT_WALLET')
     await tx.execute(
       sql`select id from ledger_accounts where id = ${hotWallet} for update`,
@@ -305,6 +317,7 @@ export async function approveWithdrawal(
       .set({
         status: 'APPROVED',
         reviewedBy: actorUserId,
+        sourcePlatformWalletId,
         reviewedAt: new Date(),
         updatedAt: new Date(),
       })
@@ -316,7 +329,11 @@ export async function approveWithdrawal(
       'withdrawal',
       withdrawal.id,
       { status: withdrawal.status },
-      { status: 'APPROVED', amount: withdrawal.amount },
+      {
+        status: 'APPROVED',
+        amount: withdrawal.amount,
+        sourcePlatformWalletId,
+      },
     )
   })
 }

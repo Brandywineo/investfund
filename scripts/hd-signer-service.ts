@@ -15,6 +15,8 @@ import { getDb } from '../src/db'
 import {
   custodySettings,
   controlledWalletTransfers,
+  platformWallets,
+  walletSets,
   walletAddresses,
   walletSweeps,
   treasuryTransfers,
@@ -42,25 +44,76 @@ const required = (name: string) => {
   return value
 }
 
-const walletFile = required('HD_WALLET_FILE')
-const password = required('HD_WALLET_PASSWORD')
 const apiToken = required('SIGNER_API_TOKEN')
 const rpcUrl = required('BSC_RPC_URL')
-const encrypted = JSON.parse(
-  await readFile(walletFile, 'utf8'),
-) as EncryptedMnemonic
-const mnemonic = decryptMnemonic(encrypted, password)
-const root = HDNodeWallet.fromPhrase(mnemonic, undefined, "m/44'/60'/0'")
 const provider = new JsonRpcProvider(rpcUrl)
-const hotWallet = root.derivePath('1/0').connect(provider)
-const gasWallet = root.derivePath('1/1').connect(provider)
+
+type WalletRuntime = {
+  signerKey: string
+  root: HDNodeWallet
+  hotWallet: HDNodeWallet
+  gasWallet: HDNodeWallet
+}
+
+type WalletRegistryEntry = {
+  signerKey: string
+  walletFile: string
+  passwordEnv: string
+}
+
+const registryEntries: Array<WalletRegistryEntry> = process.env
+  .HD_WALLET_REGISTRY_FILE
+  ? (JSON.parse(
+      await readFile(process.env.HD_WALLET_REGISTRY_FILE, 'utf8'),
+    ) as Array<WalletRegistryEntry>)
+  : [
+      {
+        signerKey: 'primary',
+        walletFile: required('HD_WALLET_FILE'),
+        passwordEnv: 'HD_WALLET_PASSWORD',
+      },
+    ]
+
+const walletRuntimes = new Map<string, WalletRuntime>()
+for (const entry of registryEntries) {
+  const password = required(entry.passwordEnv)
+  const encrypted = JSON.parse(
+    await readFile(entry.walletFile, 'utf8'),
+  ) as EncryptedMnemonic
+  const mnemonic = decryptMnemonic(encrypted, password)
+  const root = HDNodeWallet.fromPhrase(mnemonic, undefined, "m/44'/60'/0'")
+  walletRuntimes.set(entry.signerKey, {
+    signerKey: entry.signerKey,
+    root,
+    hotWallet: root.derivePath('1/0').connect(provider),
+    gasWallet: root.derivePath('1/1').connect(provider),
+  })
+}
+
+const primaryRuntime =
+  walletRuntimes.get('primary') ?? walletRuntimes.values().next().value
+if (!primaryRuntime) throw new Error('No HD wallet sets are configured')
+const { hotWallet, gasWallet } = primaryRuntime
+
+async function runtimeForWalletSetId(walletSetId: string) {
+  const set = await getDb()
+    .select({ signerKey: walletSets.signerKey })
+    .from(walletSets)
+    .where(eq(walletSets.id, walletSetId))
+    .limit(1)
+    .then((rows) => rows.at(0))
+  const runtime = set && walletRuntimes.get(set.signerKey)
+  if (!runtime) throw new Error('Wallet set is not loaded by the signer')
+  return runtime
+}
 
 async function signTokenTransfer(
   tokenAddress: string,
   destination: string,
   rawAmount: string,
+  sourceWallet = hotWallet,
 ) {
-  const token = new Contract(tokenAddress, ERC20_ABI, hotWallet)
+  const token = new Contract(tokenAddress, ERC20_ABI, sourceWallet)
   const decimals = Number(await token.decimals())
   const populated = await token.transfer.populateTransaction(
     destination,
@@ -69,15 +122,15 @@ async function signTokenTransfer(
   const [network, fee, nonce] = await Promise.all([
     provider.getNetwork(),
     provider.getFeeData(),
-    provider.getTransactionCount(hotWallet.address, 'pending'),
+    provider.getTransactionCount(sourceWallet.address, 'pending'),
   ])
   const gasLimit = await provider.estimateGas({
     ...populated,
-    from: hotWallet.address,
+    from: sourceWallet.address,
   })
   const gasPrice = fee.gasPrice ?? fee.maxFeePerGas
   if (!gasPrice) throw new Error('Could not determine network gas price')
-  const signedTransaction = await hotWallet.signTransaction({
+  const signedTransaction = await sourceWallet.signTransaction({
     ...populated,
     chainId: network.chainId,
     nonce,
@@ -269,14 +322,15 @@ async function sweep(walletAddressId: string, force = false) {
       .limit(1)
       .then((rows) => rows.at(0)),
   ])
-  if (!addressRow || addressRow.status !== 'ACTIVE')
-    throw new Error('Active deposit address not found')
+  if (!addressRow || !['ACTIVE', 'ROTATED'].includes(addressRow.status))
+    throw new Error('Monitored deposit address not found')
   if (
     !settings?.tokenContractAddress ||
     !isAddress(settings.tokenContractAddress)
   )
     throw new Error('USDT contract is not configured')
-  const child = root
+  const walletRuntime = await runtimeForWalletSetId(addressRow.walletSetId)
+  const child = walletRuntime.root
     .derivePath(`0/${addressRow.derivationIndex}`)
     .connect(provider)
   if (child.address.toLowerCase() !== addressRow.address.toLowerCase())
@@ -304,7 +358,7 @@ async function sweep(walletAddressId: string, force = false) {
 
   try {
     const populated = await token.transfer.populateTransaction(
-      hotWallet.address,
+      walletRuntime.hotWallet.address,
       balance,
     )
     const gasLimit = await provider.estimateGas({
@@ -318,7 +372,7 @@ async function sweep(walletAddressId: string, force = false) {
     const nativeBalance = await provider.getBalance(child.address)
     let gasTxHash: string | undefined
     if (nativeBalance < requiredGas) {
-      const gasTx = await gasWallet.sendTransaction({
+      const gasTx = await walletRuntime.gasWallet.sendTransaction({
         to: child.address,
         value: requiredGas - nativeBalance,
       })
@@ -329,7 +383,10 @@ async function sweep(walletAddressId: string, force = false) {
         .where(eq(walletSweeps.id, sweepRow.id))
       await gasTx.wait(1)
     }
-    const sweepTx = await token.transfer(hotWallet.address, balance)
+    const sweepTx = await token.transfer(
+      walletRuntime.hotWallet.address,
+      balance,
+    )
     await db
       .update(walletSweeps)
       .set({
@@ -371,6 +428,19 @@ async function withdraw(withdrawalId: string) {
     .then((rows) => rows.at(0))
   if (!withdrawal || !['APPROVED', 'PROCESSING'].includes(withdrawal.status))
     throw new Error('Approved or processing withdrawal not found')
+  if (!withdrawal.sourcePlatformWalletId)
+    throw new Error('Withdrawal source wallet has not been selected')
+  const sourceWalletRecord = await db
+    .select({ walletSetId: platformWallets.walletSetId })
+    .from(platformWallets)
+    .where(eq(platformWallets.id, withdrawal.sourcePlatformWalletId))
+    .limit(1)
+    .then((rows) => rows.at(0))
+  if (!sourceWalletRecord)
+    throw new Error('Withdrawal source wallet was not found')
+  const withdrawalRuntime = await runtimeForWalletSetId(
+    sourceWalletRecord.walletSetId,
+  )
   if (!isAddress(withdrawal.destinationAddress))
     throw new Error('Withdrawal address is invalid')
   if (
@@ -386,6 +456,7 @@ async function withdraw(withdrawalId: string) {
         settings.tokenContractAddress,
         withdrawal.destinationAddress,
         withdrawal.netAmount,
+        withdrawalRuntime.hotWallet,
       )
       withdrawal = await db
         .update(withdrawals)
@@ -648,20 +719,31 @@ const server = createServer(async (request, response) => {
     let result: Record<string, unknown>
     if (request.method === 'POST' && request.url === '/wallets') {
       result = {
-        hot: {
-          address: hotWallet.address,
-          derivationPath: "m/44'/60'/0'/1/0",
-        },
-        gas: {
-          address: gasWallet.address,
-          derivationPath: "m/44'/60'/0'/1/1",
-        },
+        walletSets: Array.from(walletRuntimes.values()).map((runtime) => ({
+          signerKey: runtime.signerKey,
+          fingerprint: runtime.root.neuter().extendedKey.slice(-16),
+          hot: {
+            address: runtime.hotWallet.address,
+            derivationPath: "m/44'/60'/0'/1/0",
+          },
+          gas: {
+            address: runtime.gasWallet.address,
+            derivationPath: "m/44'/60'/0'/1/1",
+          },
+        })),
       }
     } else if (request.method === 'POST' && request.url === '/derive') {
       const index = Number(body.index)
+      const signerKey = String(body.signerKey || 'primary')
+      const runtime = walletRuntimes.get(signerKey)
+      if (!runtime) throw new Error('Wallet set is not loaded by the signer')
       if (!Number.isSafeInteger(index) || index < 1)
         throw new Error('Invalid derivation index')
-      result = { index, address: root.derivePath(`0/${index}`).address }
+      result = {
+        index,
+        signerKey,
+        address: runtime.root.derivePath(`0/${index}`).address,
+      }
     } else if (request.method === 'POST' && request.url === '/sweep') {
       result = await sweep(String(body.walletAddressId), body.force === true)
     } else if (request.method === 'POST' && request.url === '/withdraw') {
@@ -707,6 +789,8 @@ const signerHost = process.env.SIGNER_HOST || '127.0.0.1'
 const signerPort = Number(process.env.SIGNER_PORT || 9012)
 server.listen(signerPort, signerHost, () => {
   console.log(`HD signer listening on http://${signerHost}:${signerPort}`)
-  console.log(`Hot wallet: ${hotWallet.address}`)
-  console.log(`Gas wallet: ${gasWallet.address}`)
+  for (const runtime of walletRuntimes.values()) {
+    console.log(`${runtime.signerKey} hot wallet: ${runtime.hotWallet.address}`)
+    console.log(`${runtime.signerKey} gas wallet: ${runtime.gasWallet.address}`)
+  }
 })

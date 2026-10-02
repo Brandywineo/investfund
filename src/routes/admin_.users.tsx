@@ -5,7 +5,12 @@ import {
   redirect,
   useRouter,
 } from '@tanstack/react-router'
-import { listUsers, updateUserAccess } from '#/server/admin-users.functions'
+import {
+  listUsers,
+  listWalletSetOptions,
+  rotateUserDepositAddress,
+  updateUserAccess,
+} from '#/server/admin-users.functions'
 import { currentUser } from '#/server/auth.functions'
 
 export const Route = createFileRoute('/admin_/users')({
@@ -14,12 +19,15 @@ export const Route = createFileRoute('/admin_/users')({
     if (!user) throw redirect({ to: '/login' })
     if (user.role !== 'ADMIN') throw redirect({ to: '/app' })
   },
-  loader: () => listUsers(),
+  loader: async () => ({
+    users: await listUsers(),
+    walletSets: await listWalletSetOptions(),
+  }),
   component: UsersPage,
 })
 
 function UsersPage() {
-  const users = Route.useLoaderData()
+  const { users, walletSets } = Route.useLoaderData()
   const router = useRouter()
   const [error, setError] = useState('')
   const [busyId, setBusyId] = useState('')
@@ -35,6 +43,19 @@ function UsersPage() {
       await router.invalidate()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Update failed')
+    } finally {
+      setBusyId('')
+    }
+  }
+  async function rotate(userId: string, walletSetId: string) {
+    if (!walletSetId) return
+    setBusyId(userId)
+    setError('')
+    try {
+      await rotateUserDepositAddress({ data: { userId, walletSetId } })
+      await router.invalidate()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Rotation failed')
     } finally {
       setBusyId('')
     }
@@ -102,8 +123,34 @@ function UsersPage() {
                           {user.depositAddress}
                         </button>
                         <span className="text-[#6e857a]">
-                          Index {user.derivationIndex} · {user.addressStatus}
+                          {user.walletSetName} · Index {user.derivationIndex} ·{' '}
+                          {user.addressStatus}
                         </span>
+                        {walletSets.some(
+                          (set) =>
+                            set.status === 'ACTIVE' &&
+                            set.id !== user.walletSetId,
+                        ) && (
+                          <button
+                            type="button"
+                            disabled={busyId === user.id}
+                            onClick={() => {
+                              const target = walletSets.find(
+                                (set) => set.status === 'ACTIVE',
+                              )
+                              if (
+                                target &&
+                                window.confirm(
+                                  `Issue a new ${target.name} deposit address? The old address will remain monitored.`,
+                                )
+                              )
+                                void rotate(user.id, target.id)
+                            }}
+                            className="mt-2 block rounded-lg border border-black/10 px-2 py-1 font-bold"
+                          >
+                            Switch to active wallet
+                          </button>
+                        )}
                       </div>
                     ) : (
                       <span className="text-[#6e857a]">Not issued yet</span>

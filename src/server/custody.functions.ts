@@ -11,10 +11,12 @@ import {
   ledgerAccounts,
   ledgerEntries,
   platformSettings,
+  platformWallets,
   treasuryTransfers,
   users,
   walletAddresses,
   walletSweeps,
+  walletSets,
   withdrawals,
 } from '#/db/schema'
 import { formatUsdt, money } from '#/domain/money'
@@ -215,6 +217,7 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
       sweepRows,
       watcher,
       userRows,
+      withdrawalSourceWallets,
     ] = await Promise.all([
       db
         .select()
@@ -335,6 +338,19 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
         .from(users)
         .where(sql`${users.role} <> 'ADMIN'`)
         .orderBy(asc(users.createdAt)),
+      db
+        .select({
+          id: platformWallets.id,
+          address: platformWallets.address,
+          tokenBalance: platformWallets.tokenBalance,
+          nativeBalance: platformWallets.nativeBalance,
+          walletSetName: walletSets.name,
+          walletSetStatus: walletSets.status,
+        })
+        .from(platformWallets)
+        .innerJoin(walletSets, eq(walletSets.id, platformWallets.walletSetId))
+        .where(eq(platformWallets.role, 'HOT_WITHDRAWAL'))
+        .orderBy(asc(walletSets.createdAt)),
     ])
     if (!settings) throw new Error('Custody settings are not initialized')
     const balances = Object.fromEntries(
@@ -399,6 +415,7 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
       sweeps: sweepRows,
       watcher,
       users: userRows,
+      withdrawalSourceWallets,
     }
   },
 )
@@ -631,13 +648,20 @@ export const reviewWithdrawal = createServerFn({ method: 'POST' })
         'RELEASE_FAILED',
       ]),
       reference: z.string().trim().max(160).optional(),
+      sourcePlatformWalletId: z.string().uuid().optional(),
     }),
   )
   .handler(async ({ data }) => {
     const admin = await requireAdmin()
-    if (data.action === 'APPROVE')
-      await approveWithdrawal(data.withdrawalId, admin.id)
-    else if (
+    if (data.action === 'APPROVE') {
+      if (!data.sourcePlatformWalletId)
+        throw new Error('Select the hot wallet that will fund this withdrawal')
+      await approveWithdrawal(
+        data.withdrawalId,
+        admin.id,
+        data.sourcePlatformWalletId,
+      )
+    } else if (
       data.action === 'FAIL_APPROVED' ||
       data.action === 'RELEASE_FAILED'
     ) {

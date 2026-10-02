@@ -68,6 +68,12 @@ export const walletAddressStatus = pgEnum('wallet_address_status', [
   'ROTATED',
   'PAUSED',
 ])
+export const walletSetStatus = pgEnum('wallet_set_status', [
+  'READY',
+  'ACTIVE',
+  'DRAINING',
+  'RETIRED',
+])
 export const sweepStatus = pgEnum('sweep_status', [
   'WAITING_FINALITY',
   'BELOW_THRESHOLD',
@@ -390,10 +396,35 @@ export const custodySettings = pgTable('custody_settings', {
   ...timestamps,
 })
 
+export const walletSets = pgTable(
+  'wallet_sets',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    name: text('name').notNull(),
+    signerKey: text('signer_key').notNull(),
+    fingerprint: text('fingerprint').notNull(),
+    status: walletSetStatus('status').default('READY').notNull(),
+    activatedAt: timestamp('activated_at', { withTimezone: true }),
+    retiredAt: timestamp('retired_at', { withTimezone: true }),
+    createdBy: uuid('created_by').references(() => users.id),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('wallet_sets_signer_key_unique').on(table.signerKey),
+    uniqueIndex('wallet_sets_fingerprint_unique').on(table.fingerprint),
+    uniqueIndex('wallet_sets_single_active_unique')
+      .on(table.status)
+      .where(sql`${table.status} = 'ACTIVE'`),
+  ],
+)
+
 export const walletAddresses = pgTable(
   'wallet_addresses',
   {
     id: uuid('id').defaultRandom().primaryKey(),
+    walletSetId: uuid('wallet_set_id')
+      .references(() => walletSets.id, { onDelete: 'restrict' })
+      .notNull(),
     userId: uuid('user_id')
       .references(() => users.id, { onDelete: 'restrict' })
       .notNull(),
@@ -416,7 +447,8 @@ export const walletAddresses = pgTable(
     uniqueIndex('wallet_addresses_address_unique').on(
       sql`lower(${table.address})`,
     ),
-    uniqueIndex('wallet_addresses_derivation_index_unique').on(
+    uniqueIndex('wallet_addresses_set_derivation_unique').on(
+      table.walletSetId,
       table.derivationIndex,
     ),
     uniqueIndex('wallet_addresses_active_user_unique')
@@ -994,6 +1026,9 @@ export const platformWallets = pgTable(
   'platform_wallets',
   {
     id: uuid('id').defaultRandom().primaryKey(),
+    walletSetId: uuid('wallet_set_id')
+      .references(() => walletSets.id, { onDelete: 'restrict' })
+      .notNull(),
     role: platformWalletRole('role').notNull(),
     address: text('address').notNull(),
     derivationPath: text('derivation_path').notNull(),
@@ -1007,7 +1042,10 @@ export const platformWallets = pgTable(
     ...timestamps,
   },
   (table) => [
-    uniqueIndex('platform_wallets_role_unique').on(table.role),
+    uniqueIndex('platform_wallets_set_role_unique').on(
+      table.walletSetId,
+      table.role,
+    ),
     uniqueIndex('platform_wallets_address_unique').on(
       sql`lower(${table.address})`,
     ),
@@ -1220,6 +1258,10 @@ export const withdrawals = pgTable(
     destinationAddress: text('destination_address').notNull(),
     network: text('network').default('BEP20').notNull(),
     status: withdrawalStatus('status').default('REQUESTED').notNull(),
+    sourcePlatformWalletId: uuid('source_platform_wallet_id').references(
+      () => platformWallets.id,
+      { onDelete: 'restrict' },
+    ),
     txHash: text('tx_hash'),
     signedTransaction: text('signed_transaction'),
     chainNonce: integer('chain_nonce'),

@@ -1,0 +1,12 @@
+[
+  {
+    "signerKey": "primary",
+    "walletFile": "/home/deno/.config/investfund/hd-wallet.json",
+    "passwordEnv": "HD_WALLET_PASSWORD"
+  },
+  {
+    "signerKey": "reserve-2026",
+    "walletFile": "/home/deno/.config/investfund/hd-wallet-reserve-2026.json",
+    "passwordEnv": "HD_WALLET_PASSWORD_RESERVE"
+  }
+]

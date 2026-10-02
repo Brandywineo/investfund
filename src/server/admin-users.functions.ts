@@ -7,9 +7,11 @@ import {
   deposits,
   users,
   walletAddresses,
+  walletSets,
   withdrawals,
 } from '#/db/schema'
 import { getSessionUser } from './session'
+import { rotateUserWalletAddress } from './wallet-address.service'
 
 async function requireAdmin() {
   const user = await getSessionUser()
@@ -31,6 +33,8 @@ export const listUsers = createServerFn({ method: 'GET' }).handler(async () => {
       depositAddress: walletAddresses.address,
       derivationIndex: walletAddresses.derivationIndex,
       addressStatus: walletAddresses.status,
+      walletSetId: walletAddresses.walletSetId,
+      walletSetName: walletSets.name,
       confirmedDeposits: sql<string>`coalesce((select sum(${deposits.amount}) from ${deposits} where ${deposits.userId} = ${users.id} and ${deposits.status} = 'CONFIRMED'), 0)`,
       confirmedWithdrawals: sql<string>`coalesce((select sum(${withdrawals.amount}) from ${withdrawals} where ${withdrawals.userId} = ${users.id} and ${withdrawals.status} = 'CONFIRMED'), 0)`,
     })
@@ -42,9 +46,47 @@ export const listUsers = createServerFn({ method: 'GET' }).handler(async () => {
         eq(walletAddresses.status, 'ACTIVE'),
       ),
     )
+    .leftJoin(walletSets, eq(walletSets.id, walletAddresses.walletSetId))
     .orderBy(asc(users.createdAt))
     .limit(250)
 })
+
+export const listWalletSetOptions = createServerFn({ method: 'GET' }).handler(
+  async () => {
+    await requireAdmin()
+    return getDb()
+      .select({
+        id: walletSets.id,
+        name: walletSets.name,
+        status: walletSets.status,
+      })
+      .from(walletSets)
+      .orderBy(asc(walletSets.createdAt))
+  },
+)
+
+export const rotateUserDepositAddress = createServerFn({ method: 'POST' })
+  .validator(
+    z.object({ userId: z.string().uuid(), walletSetId: z.string().uuid() }),
+  )
+  .handler(async ({ data }) => {
+    const admin = await requireAdmin()
+    const address = await rotateUserWalletAddress(data.userId, data.walletSetId)
+    await getDb()
+      .insert(auditLogs)
+      .values({
+        actorUserId: admin.id,
+        action: 'USER_DEPOSIT_ADDRESS_ROTATED',
+        entityType: 'user',
+        entityId: data.userId,
+        after: {
+          walletSetId: data.walletSetId,
+          walletAddressId: address?.id,
+          address: address?.address,
+        },
+      })
+    return address
+  })
 
 export const updateUserAccess = createServerFn({ method: 'POST' })
   .validator(

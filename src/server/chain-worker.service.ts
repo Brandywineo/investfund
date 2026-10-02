@@ -20,6 +20,7 @@ import {
   platformWallets,
   platformWalletTransactions,
   walletAddresses,
+  walletSets,
   walletSweeps,
   treasuryTransfers,
   treasuryTransactionAttempts,
@@ -278,7 +279,7 @@ async function runChainWorkerBatch() {
     const addressRows = await db
       .select()
       .from(walletAddresses)
-      .where(eq(walletAddresses.status, 'ACTIVE'))
+      .where(inArray(walletAddresses.status, ['ACTIVE', 'ROTATED']))
     const addressMap = new Map(
       addressRows.map((row) => [row.address.toLowerCase(), row]),
     )
@@ -344,30 +345,54 @@ async function runChainWorkerBatch() {
     let credited = 0
 
     const signerWallets = await getSignerPlatformWallets()
-    const signerWalletDefinitions = [
-      {
-        role: 'HOT_WITHDRAWAL' as const,
-        address: getAddress(signerWallets.hot.address),
-        derivationPath: signerWallets.hot.derivationPath,
-      },
-      {
-        role: 'SWEEP_GAS' as const,
-        address: getAddress(signerWallets.gas.address),
-        derivationPath: signerWallets.gas.derivationPath,
-      },
-    ]
-    for (const definition of signerWalletDefinitions) {
-      await db
-        .insert(platformWallets)
-        .values(definition)
-        .onConflictDoUpdate({
-          target: platformWallets.role,
-          set: {
-            address: definition.address,
-            derivationPath: definition.derivationPath,
-            updatedAt: new Date(),
-          },
+    for (const signerSet of signerWallets.walletSets) {
+      const walletSet = await db
+        .insert(walletSets)
+        .values({
+          name:
+            signerSet.signerKey === 'primary'
+              ? 'Primary Wallet'
+              : signerSet.signerKey,
+          signerKey: signerSet.signerKey,
+          fingerprint: signerSet.fingerprint,
+          status: signerSet.signerKey === 'primary' ? 'ACTIVE' : 'READY',
+          activatedAt:
+            signerSet.signerKey === 'primary' ? new Date() : undefined,
         })
+        .onConflictDoUpdate({
+          target: walletSets.signerKey,
+          set: { fingerprint: signerSet.fingerprint, updatedAt: new Date() },
+        })
+        .returning({ id: walletSets.id })
+        .then((rows) => rows.at(0))
+      if (!walletSet) throw new Error('Could not synchronize wallet set')
+      const signerWalletDefinitions = [
+        {
+          walletSetId: walletSet.id,
+          role: 'HOT_WITHDRAWAL' as const,
+          address: getAddress(signerSet.hot.address),
+          derivationPath: signerSet.hot.derivationPath,
+        },
+        {
+          walletSetId: walletSet.id,
+          role: 'SWEEP_GAS' as const,
+          address: getAddress(signerSet.gas.address),
+          derivationPath: signerSet.gas.derivationPath,
+        },
+      ]
+      for (const definition of signerWalletDefinitions) {
+        await db
+          .insert(platformWallets)
+          .values(definition)
+          .onConflictDoUpdate({
+            target: [platformWallets.walletSetId, platformWallets.role],
+            set: {
+              address: definition.address,
+              derivationPath: definition.derivationPath,
+              updatedAt: new Date(),
+            },
+          })
+      }
     }
     let managedWalletRows = await db.select().from(platformWallets)
     const configuredMaintenanceInterval = Number(
@@ -927,7 +952,7 @@ async function runChainWorkerBatch() {
         )
         .where(
           and(
-            eq(walletAddresses.status, 'ACTIVE'),
+            inArray(walletAddresses.status, ['ACTIVE', 'ROTATED']),
             eq(deposits.status, 'CONFIRMED'),
             sql`${deposits.chainFinalizedAt} is not null`,
             isNull(walletSweeps.id),
@@ -991,19 +1016,22 @@ async function runChainWorkerBatch() {
       }
     }
     const approvedWithdrawals = await db
-      .select({ id: withdrawals.id })
+      .select({
+        id: withdrawals.id,
+        sourcePlatformWalletId: withdrawals.sourcePlatformWalletId,
+      })
       .from(withdrawals)
       .where(eq(withdrawals.status, 'APPROVED'))
     const minimumHotGasForTokenTransfer =
       process.env.MIN_HOT_GAS_BNB ?? '0.00002'
-    const hotWalletBeforeTransfers = managedWalletRows.find(
-      (wallet) => wallet.role === 'HOT_WITHDRAWAL',
-    )
-    const hotWalletHasGasBeforeTransfers = hasSufficientHotGas(
-      hotWalletBeforeTransfers?.nativeBalance ?? '0',
-      minimumHotGasForTokenTransfer,
-    )
     for (const withdrawal of approvedWithdrawals) {
+      const sourceWallet = managedWalletRows.find(
+        (wallet) => wallet.id === withdrawal.sourcePlatformWalletId,
+      )
+      const hotWalletHasGasBeforeTransfers = hasSufficientHotGas(
+        sourceWallet?.nativeBalance ?? '0',
+        minimumHotGasForTokenTransfer,
+      )
       if (!hotWalletHasGasBeforeTransfers) {
         console.warn(
           `Withdrawal ${withdrawal.id} waiting for confirmed hot-wallet BNB`,

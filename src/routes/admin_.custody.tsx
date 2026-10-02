@@ -39,6 +39,9 @@ function CustodyAdminPage() {
   const [busyAddressId, setBusyAddressId] = useState('')
   const [addressSort, setAddressSort] = useState('registered')
   const [refs, setRefs] = useState<Record<string, string>>({})
+  const [withdrawalSources, setWithdrawalSources] = useState<
+    Record<string, string>
+  >({})
   const [treasuryDestination, setTreasuryDestination] = useState('')
   async function run(action: () => Promise<unknown>, success: string) {
     setBusy(true)
@@ -601,44 +604,67 @@ function CustodyAdminPage() {
               <div className="grid min-w-52 gap-2">
                 <CopyButton value={item.destinationAddress} />
                 {item.status === 'REQUESTED' && (
-                  <div className="flex gap-2">
-                    <button
-                      disabled={busy}
-                      onClick={() =>
-                        void run(
-                          () =>
-                            reviewWithdrawal({
-                              data: {
-                                withdrawalId: item.id,
-                                action: 'APPROVE',
-                              },
-                            }),
-                          'Withdrawal approved and funds reserved.',
-                        )
+                  <div className="grid gap-2">
+                    <select
+                      aria-label="Withdrawal source wallet"
+                      value={withdrawalSources[item.id] || ''}
+                      onChange={(event) =>
+                        setWithdrawalSources((current) => ({
+                          ...current,
+                          [item.id]: event.target.value,
+                        }))
                       }
-                      className="action"
+                      className="rounded-xl border border-black/10 bg-white px-3 py-2 text-xs"
                     >
-                      Approve
-                    </button>
-                    <button
-                      disabled={busy}
-                      onClick={() =>
-                        void run(
-                          () =>
-                            reviewWithdrawal({
-                              data: {
-                                withdrawalId: item.id,
-                                action: 'REJECT',
-                                reference: 'Rejected by administrator',
-                              },
-                            }),
-                          'Withdrawal rejected.',
-                        )
-                      }
-                      className="danger"
-                    >
-                      Reject
-                    </button>
+                      <option value="">Select source hot wallet</option>
+                      {data.withdrawalSourceWallets.map((wallet) => (
+                        <option key={wallet.id} value={wallet.id}>
+                          {wallet.walletSetName} ·{' '}
+                          {Number(wallet.tokenBalance).toFixed(2)} USDT
+                        </option>
+                      ))}
+                    </select>
+                    <div className="flex gap-2">
+                      <button
+                        disabled={busy || !withdrawalSources[item.id]}
+                        onClick={() =>
+                          void run(
+                            () =>
+                              reviewWithdrawal({
+                                data: {
+                                  withdrawalId: item.id,
+                                  action: 'APPROVE',
+                                  sourcePlatformWalletId:
+                                    withdrawalSources[item.id],
+                                },
+                              }),
+                            'Withdrawal approved and funds reserved.',
+                          )
+                        }
+                        className="action"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        disabled={busy}
+                        onClick={() =>
+                          void run(
+                            () =>
+                              reviewWithdrawal({
+                                data: {
+                                  withdrawalId: item.id,
+                                  action: 'REJECT',
+                                  reference: 'Rejected by administrator',
+                                },
+                              }),
+                            'Withdrawal rejected.',
+                          )
+                        }
+                        className="danger"
+                      >
+                        Reject
+                      </button>
+                    </div>
                   </div>
                 )}
                 {item.status === 'APPROVED' && (
