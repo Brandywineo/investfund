@@ -12,7 +12,7 @@ import {
   users,
   withdrawals,
 } from '#/db/schema'
-import { money } from '#/domain/money'
+import { formatUsdt, money } from '#/domain/money'
 import { calculateWithdrawal } from '#/domain/withdrawal'
 import { postLedgerTransaction } from './ledger.service'
 import { notifyUser } from './notification.service'
@@ -352,8 +352,11 @@ export async function reserveWithdrawalRequest(input: {
     await tx.execute(
       sql`select id from ledger_accounts where id in (${available}, ${reserved}) for update`,
     )
-    if (money(await balance(tx, available, 'CREDIT')).lessThan(input.amount))
-      throw new Error('Insufficient available balance')
+    const availableBalance = money(await balance(tx, available, 'CREDIT'))
+    if (availableBalance.lessThan(input.amount))
+      throw new Error(
+        `Withdrawal exceeds your available balance of ${formatUsdt(availableBalance)} USDT`,
+      )
     const withdrawal = await tx
       .insert(withdrawals)
       .values({

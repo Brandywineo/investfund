@@ -1,5 +1,5 @@
 import { createServerFn } from '@tanstack/react-start'
-import { asc, desc, eq, like, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, like, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { isAddress } from 'ethers'
 import { getDb } from '#/db'
@@ -69,40 +69,75 @@ export const getCustodyAccount = createServerFn({ method: 'GET' }).handler(
   async () => {
     const user = await requireUser()
     const db = getDb()
-    const [settings, investmentSettings, userDeposits, userWithdrawals] =
-      await Promise.all([
-        db
-          .select()
-          .from(custodySettings)
-          .where(eq(custodySettings.id, 1))
-          .limit(1)
-          .then((rows) => rows.at(0)),
-        db
-          .select({
-            withdrawalFeePercent: platformSettings.withdrawalFeePercent,
-          })
-          .from(platformSettings)
-          .where(eq(platformSettings.id, 1))
-          .limit(1)
-          .then((rows) => rows.at(0)),
-        db
-          .select()
-          .from(deposits)
-          .where(eq(deposits.userId, user.id))
-          .orderBy(desc(deposits.createdAt))
-          .limit(50),
-        db
-          .select()
-          .from(withdrawals)
-          .where(eq(withdrawals.userId, user.id))
-          .orderBy(desc(withdrawals.createdAt))
-          .limit(50),
-      ])
+    const [
+      settings,
+      investmentSettings,
+      userDeposits,
+      userWithdrawals,
+      accountBalances,
+      pendingWithdrawal,
+    ] = await Promise.all([
+      db
+        .select()
+        .from(custodySettings)
+        .where(eq(custodySettings.id, 1))
+        .limit(1)
+        .then((rows) => rows.at(0)),
+      db
+        .select({
+          withdrawalFeePercent: platformSettings.withdrawalFeePercent,
+        })
+        .from(platformSettings)
+        .where(eq(platformSettings.id, 1))
+        .limit(1)
+        .then((rows) => rows.at(0)),
+      db
+        .select()
+        .from(deposits)
+        .where(eq(deposits.userId, user.id))
+        .orderBy(desc(deposits.createdAt))
+        .limit(50),
+      db
+        .select()
+        .from(withdrawals)
+        .where(eq(withdrawals.userId, user.id))
+        .orderBy(desc(withdrawals.createdAt))
+        .limit(50),
+      db
+        .select({
+          code: ledgerAccounts.code,
+          balance: sql<string>`coalesce(sum(${ledgerEntries.credit} - ${ledgerEntries.debit}), 0)`,
+        })
+        .from(ledgerAccounts)
+        .leftJoin(ledgerEntries, eq(ledgerEntries.accountId, ledgerAccounts.id))
+        .where(eq(ledgerAccounts.ownerUserId, user.id))
+        .groupBy(ledgerAccounts.code),
+      db
+        .select({
+          amount: sql<string>`coalesce(sum(${withdrawals.amount}), 0)`,
+        })
+        .from(withdrawals)
+        .where(
+          and(
+            eq(withdrawals.userId, user.id),
+            inArray(withdrawals.status, [
+              'REQUESTED',
+              'APPROVED',
+              'PROCESSING',
+              'BROADCAST',
+            ]),
+          ),
+        )
+        .then((rows) => rows.at(0)),
+    ])
     if (!settings) throw new Error('Custody settings are not initialized')
     let walletAddress: string | null = null
     if (process.env.SIGNER_URL && process.env.SIGNER_API_TOKEN) {
       walletAddress = (await getOrCreateWalletAddress(user.id))?.address ?? null
     }
+    const balances = Object.fromEntries(
+      accountBalances.map((item) => [item.code, item.balance]),
+    )
     return {
       settings: {
         ...settings,
@@ -110,6 +145,11 @@ export const getCustodyAccount = createServerFn({ method: 'GET' }).handler(
       },
       depositAddress: walletAddress ?? settings.depositAddress,
       automatedDeposits: Boolean(walletAddress),
+      balances: {
+        available: formatUsdt(balances[`USER:${user.id}:AVAILABLE`] ?? 0),
+        invested: formatUsdt(balances[`USER:${user.id}:INVESTED`] ?? 0),
+        pendingWithdrawal: formatUsdt(pendingWithdrawal?.amount ?? 0),
+      },
       deposits: userDeposits,
       withdrawals: userWithdrawals,
     }

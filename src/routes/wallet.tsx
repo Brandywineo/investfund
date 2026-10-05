@@ -30,6 +30,10 @@ function WalletPage() {
   const [busy, setBusy] = useState(false)
   const [destinationAddress, setDestinationAddress] = useState('')
   const [withdrawalAmount, setWithdrawalAmount] = useState('')
+  const availableBalance = Number(data.balances.available)
+  const requestedAmount = Number(withdrawalAmount)
+  const amountExceedsAvailable =
+    Number.isFinite(requestedAmount) && requestedAmount > availableBalance
   async function run(action: () => Promise<unknown>, success: string) {
     setBusy(true)
     setError('')
@@ -112,19 +116,54 @@ function WalletPage() {
               {data.settings.network} USDT
             </p>
             <h2 className="mt-2 text-2xl font-semibold">Request withdrawal</h2>
+            <div className="mt-5 grid grid-cols-3 gap-2">
+              {[
+                ['Available', data.balances.available],
+                ['Invested', data.balances.invested],
+                ['Pending', data.balances.pendingWithdrawal],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-2xl bg-[#f4f6f2] p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[.08em] text-[#6e857a]">
+                    {label}
+                  </p>
+                  <p className="mt-1 text-base font-bold">{value}</p>
+                  <p className="text-[10px] text-[#6e857a]">USDT</p>
+                </div>
+              ))}
+            </div>
+            <p className="mt-3 text-xs text-[#6e857a]">
+              Only your available balance can be withdrawn. Active investment
+              capital remains locked until it is released.
+            </p>
             <label className="mt-7 block text-sm font-semibold">
-              Amount
+              <span className="flex items-center justify-between gap-3">
+                Amount
+                <button
+                  type="button"
+                  onClick={() => setWithdrawalAmount(data.balances.available)}
+                  className="text-xs font-bold text-[#527c16]"
+                >
+                  Use max
+                </button>
+              </span>
               <input
                 name="amount"
                 value={withdrawalAmount}
                 onChange={(event) => setWithdrawalAmount(event.target.value)}
                 inputMode="decimal"
                 min={Number(data.settings.minimumWithdrawalAmount)}
+                max={availableBalance}
                 step="0.00000001"
                 required
                 className={input}
               />
             </label>
+            {amountExceedsAvailable && (
+              <p className="mt-2 text-xs font-semibold text-red-700">
+                Amount exceeds your available balance of{' '}
+                {data.balances.available} USDT.
+              </p>
+            )}
             <label className="relative mt-4 block text-sm font-semibold">
               Destination address
               <input
@@ -137,7 +176,7 @@ function WalletPage() {
               <PasteButton onPaste={setDestinationAddress} />
             </label>
             <button
-              disabled={busy}
+              disabled={busy || amountExceedsAvailable}
               className="mt-6 w-full rounded-2xl bg-[#123d2d] px-5 py-3 font-bold text-white disabled:opacity-50"
             >
               Request withdrawal
