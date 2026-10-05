@@ -10,6 +10,7 @@ import { currentUser } from '#/server/auth.functions'
 import {
   getAdminAlertSettings,
   retryAdminAlert,
+  sendAdminPushTest,
   sendAdminWhatsAppTest,
   updateAdminAlertSettings,
 } from '#/server/admin-alert.functions'
@@ -275,6 +276,31 @@ function AdminAlertsPage() {
             </button>
           </div>
         </form>
+
+        <section className="mt-5 rounded-[2rem] bg-white p-7 ring-1 ring-black/5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold">Administrator PWA test</h2>
+              <p className="mt-1 text-sm text-[#6e857a]">
+                Sends a real push notification to every active administrator
+                device that has enabled notifications.
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={busy || !settings?.adminPushEnabled}
+              onClick={() =>
+                void run(
+                  () => sendAdminPushTest(),
+                  'Administrator PWA test sent.',
+                )
+              }
+              className="rounded-2xl bg-[#d9ff71] px-6 py-3.5 font-bold text-[#123d2d] disabled:opacity-50"
+            >
+              Send PWA test
+            </button>
+          </div>
+        </section>
 
         <section className="mt-5 rounded-[2rem] bg-white p-7 ring-1 ring-black/5">
           <h2 className="text-2xl font-semibold">Recent alert attempts</h2>

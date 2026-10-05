@@ -16,6 +16,7 @@ import {
   whatsappProviderStatus,
 } from './admin-alert.service'
 import { getSessionUser } from './session'
+import { notifyAdmins } from './notification.service'
 
 async function requireAdmin() {
   const user = await getSessionUser()
@@ -191,6 +192,27 @@ export const sendAdminWhatsAppTest = createServerFn({ method: 'POST' })
       throw new Error('Test alert was not delivered; check recent attempts')
     return result
   })
+
+export const sendAdminPushTest = createServerFn({ method: 'POST' }).handler(
+  async () => {
+    await requireAdmin()
+    const settings = await getDb()
+      .select({ enabled: adminAlertSettings.adminPushEnabled })
+      .from(adminAlertSettings)
+      .where(eq(adminAlertSettings.id, 1))
+      .limit(1)
+      .then((rows) => rows.at(0))
+    if (!settings?.enabled)
+      throw new Error('Enable administrator PWA alerts first')
+    return notifyAdmins({
+      category: 'SYSTEM',
+      title: 'InvestFund administrator alert',
+      body: 'PWA deposit and withdrawal alerts are working.',
+      href: '/admin/alerts',
+      eventKey: `admin-push-test:${crypto.randomUUID()}`,
+    })
+  },
+)
 
 export const retryAdminAlert = createServerFn({ method: 'POST' })
   .validator(z.object({ id: z.string().uuid() }))
