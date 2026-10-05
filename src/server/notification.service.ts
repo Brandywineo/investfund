@@ -5,6 +5,7 @@ import {
   notifications,
   notificationPreferences,
   pushSubscriptions,
+  users,
 } from '#/db/schema'
 
 export type NotificationCategory =
@@ -115,4 +116,33 @@ export async function notifyUser(input: {
       ),
     )
   return item
+}
+
+export async function notifyAdmins(input: {
+  category: NotificationCategory
+  title: string
+  body: string
+  href?: string
+  eventKey: string
+}) {
+  const admins = await getDb()
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.role, 'ADMIN'), eq(users.status, 'ACTIVE')))
+  const results = await Promise.allSettled(
+    admins.map((admin) =>
+      notifyUser({
+        userId: admin.id,
+        category: input.category,
+        title: input.title,
+        body: input.body,
+        href: input.href,
+        eventKey: input.eventKey,
+      }),
+    ),
+  )
+  return {
+    admins: admins.length,
+    failures: results.filter((result) => result.status === 'rejected').length,
+  }
 }

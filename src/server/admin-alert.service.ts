@@ -5,20 +5,29 @@ import {
   adminAlertSettings,
   platformWallets,
   platformWalletTransactions,
+  users,
   walletSets,
+  withdrawals,
 } from '#/db/schema'
+import { notifyAdmins } from './notification.service'
 
-type HotWalletAlertPayload = {
+type AdminAlertPayload = {
   amount: string
   asset: string
-  walletSet: string
-  walletAddress: string
-  sourceAddress: string
-  txHash: string
-  sourceType: 'USER_SWEEP' | 'DIRECT_HOT_DEPOSIT' | 'TEST'
+  walletSet?: string
+  walletAddress?: string
+  sourceAddress?: string
+  txHash?: string
+  sourceType?: 'USER_SWEEP' | 'DIRECT_HOT_DEPOSIT' | 'TEST'
+  userName?: string
+  userEmail?: string
+  destinationAddress?: string
+  feeAmount?: string
+  netAmount?: string
+  withdrawalId?: string
 }
 
-function whatsappConfig() {
+function metaWhatsAppConfig() {
   const accessToken = process.env.WHATSAPP_ACCESS_TOKEN?.trim()
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID?.trim()
   const templateName =
@@ -37,8 +46,42 @@ function whatsappConfig() {
   }
 }
 
+function webBridgeConfig() {
+  const url = process.env.WHATSAPP_WEB_BRIDGE_URL?.trim()
+  const token = process.env.WHATSAPP_WEB_BRIDGE_TOKEN?.trim()
+  if (!url || !token) return null
+  return { url: url.replace(/\/$/, ''), token }
+}
+
+export function whatsappProvider() {
+  const requested = process.env.WHATSAPP_PROVIDER?.trim().toUpperCase()
+  if (requested === 'WEB_BRIDGE') return webBridgeConfig() ? 'WEB_BRIDGE' : null
+  if (requested === 'META') return metaWhatsAppConfig() ? 'META' : null
+  if (webBridgeConfig()) return 'WEB_BRIDGE'
+  if (metaWhatsAppConfig()) return 'META'
+  return null
+}
+
 export function whatsappAlertsConfigured() {
-  return Boolean(whatsappConfig())
+  return Boolean(whatsappProvider())
+}
+
+export async function whatsappProviderStatus() {
+  const provider = whatsappProvider()
+  if (provider === 'META') return 'READY'
+  if (provider !== 'WEB_BRIDGE') return 'NOT_CONFIGURED'
+  const config = webBridgeConfig()
+  if (!config) return 'NOT_CONFIGURED'
+  try {
+    const response = await fetch(`${config.url}/health`, {
+      headers: { authorization: `Bearer ${config.token}` },
+      signal: AbortSignal.timeout(3_000),
+    })
+    const body = (await response.json()) as { state?: string }
+    return response.ok ? body.state || 'UNKNOWN' : 'UNAVAILABLE'
+  } catch {
+    return 'UNAVAILABLE'
+  }
 }
 
 function normalizePhone(value: string) {
@@ -53,7 +96,7 @@ export async function queueConfirmedHotWalletAlerts() {
     .where(eq(adminAlertSettings.id, 1))
     .limit(1)
     .then((rows) => rows.at(0))
-  if (!settings?.whatsappEnabled || !settings.whatsappRecipient) return 0
+  if (!settings) return 0
 
   const eligibleClassifications = [
     ...(settings.notifyUserSweeps ? ['USER_SWEEP'] : []),
@@ -103,7 +146,7 @@ export async function queueConfirmedHotWalletAlerts() {
 
   let queued = 0
   for (const transaction of transactions) {
-    const payload: HotWalletAlertPayload = {
+    const payload: AdminAlertPayload = {
       amount: transaction.amount,
       asset: transaction.asset,
       walletSet: transaction.walletSetName,
@@ -115,28 +158,117 @@ export async function queueConfirmedHotWalletAlerts() {
           ? 'USER_SWEEP'
           : 'DIRECT_HOT_DEPOSIT',
     }
-    const inserted = await db
-      .insert(adminAlertDeliveries)
-      .values({
-        eventKey: `hot-wallet-deposit:${transaction.id}`,
-        category: 'HOT_WALLET_DEPOSIT',
-        recipient: normalizePhone(settings.whatsappRecipient),
-        payload,
+    if (settings.adminPushEnabled) {
+      await notifyAdmins({
+        category: 'SYSTEM',
+        title: 'Hot wallet funded',
+        body: `${Number(transaction.amount).toFixed(2)} ${transaction.asset} reached ${transaction.walletSetName}.`,
+        href: '/admin/wallets',
+        eventKey: `admin-hot-wallet-deposit:${transaction.id}`,
       })
-      .onConflictDoNothing()
-      .returning({ id: adminAlertDeliveries.id })
-      .then((rows) => rows.at(0))
-    if (inserted) queued += 1
+    }
+    if (settings.whatsappEnabled && settings.whatsappRecipient) {
+      const inserted = await db
+        .insert(adminAlertDeliveries)
+        .values({
+          eventKey: `hot-wallet-deposit:${transaction.id}`,
+          category: 'HOT_WALLET_DEPOSIT',
+          recipient: normalizePhone(settings.whatsappRecipient),
+          payload,
+        })
+        .onConflictDoNothing()
+        .returning({ id: adminAlertDeliveries.id })
+        .then((rows) => rows.at(0))
+      if (inserted) queued += 1
+    }
   }
   return queued
 }
 
-async function sendWhatsAppTemplate(
+function alertText(category: string, payload: AdminAlertPayload) {
+  if (category === 'WITHDRAWAL_REQUESTED') {
+    return [
+      'InvestFund withdrawal requested',
+      '',
+      `User: ${payload.userName} (${payload.userEmail})`,
+      `Requested: ${payload.amount} ${payload.asset}`,
+      `Fee: ${payload.feeAmount} ${payload.asset}`,
+      `Net payout: ${payload.netAmount} ${payload.asset}`,
+      `Destination: ${payload.destinationAddress}`,
+      `Request ID: ${payload.withdrawalId}`,
+    ].join('\n')
+  }
+  if (category === 'TEST')
+    return 'InvestFund administrator alert test. No funds moved.'
+  return [
+    'InvestFund deposit confirmed',
+    '',
+    `Amount: ${payload.amount} ${payload.asset}`,
+    `Wallet: ${payload.walletSet}`,
+    `Source: ${payload.sourceType}`,
+    `Transaction: ${payload.txHash}`,
+  ].join('\n')
+}
+
+async function sendWebBridgeMessage(
   recipient: string,
-  payload: HotWalletAlertPayload,
+  category: string,
+  payload: AdminAlertPayload,
 ) {
-  const config = whatsappConfig()
+  const config = webBridgeConfig()
+  if (!config) throw new Error('WhatsApp Web bridge is not configured')
+  const response = await fetch(`${config.url}/send`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${config.token}`,
+      'content-type': 'application/json',
+    },
+    signal: AbortSignal.timeout(
+      Number(process.env.WHATSAPP_REQUEST_TIMEOUT_MS || 10_000),
+    ),
+    body: JSON.stringify({
+      recipient,
+      message: alertText(category, payload),
+    }),
+  })
+  const body = (await response.json().catch(() => ({}))) as {
+    messageId?: string
+    error?: string
+  }
+  if (!response.ok)
+    throw new Error(
+      body.error || `WhatsApp bridge returned HTTP ${response.status}`,
+    )
+  return body.messageId ?? null
+}
+
+async function sendMetaWhatsAppTemplate(
+  recipient: string,
+  category: string,
+  payload: AdminAlertPayload,
+) {
+  const config = metaWhatsAppConfig()
   if (!config) throw new Error('WhatsApp Cloud API is not configured')
+  const isWithdrawal = category === 'WITHDRAWAL_REQUESTED'
+  const templateName = isWithdrawal
+    ? process.env.WHATSAPP_WITHDRAWAL_TEMPLATE_NAME?.trim() ||
+      'investfund_withdrawal_requested'
+    : config.templateName
+  const parameters = isWithdrawal
+    ? [
+        payload.userName,
+        payload.amount,
+        payload.netAmount,
+        payload.destinationAddress,
+        payload.withdrawalId,
+      ]
+    : [
+        payload.amount,
+        payload.asset,
+        payload.walletSet,
+        payload.sourceType,
+        payload.txHash,
+      ]
   const response = await fetch(
     `https://graph.facebook.com/${config.apiVersion}/${config.phoneNumberId}/messages`,
     {
@@ -153,18 +285,15 @@ async function sendWhatsAppTemplate(
         to: recipient,
         type: 'template',
         template: {
-          name: config.templateName,
+          name: templateName,
           language: { code: config.templateLanguage },
           components: [
             {
               type: 'body',
-              parameters: [
-                { type: 'text', text: payload.amount },
-                { type: 'text', text: payload.asset },
-                { type: 'text', text: payload.walletSet },
-                { type: 'text', text: payload.sourceType },
-                { type: 'text', text: payload.txHash },
-              ],
+              parameters: parameters.map((text) => ({
+                type: 'text',
+                text: text || '—',
+              })),
             },
           ],
         },
@@ -181,6 +310,19 @@ async function sendWhatsAppTemplate(
     )
   }
   return body.messages?.at(0)?.id ?? null
+}
+
+async function sendWhatsApp(
+  recipient: string,
+  category: string,
+  payload: AdminAlertPayload,
+) {
+  const provider = whatsappProvider()
+  if (provider === 'WEB_BRIDGE')
+    return sendWebBridgeMessage(recipient, category, payload)
+  if (provider === 'META')
+    return sendMetaWhatsAppTemplate(recipient, category, payload)
+  throw new Error('No WhatsApp provider is configured')
 }
 
 export async function processAdminAlertOutbox(limit = 10) {
@@ -214,9 +356,10 @@ export async function processAdminAlertOutbox(limit = 10) {
       .set({ status: 'PROCESSING', attempts, updatedAt: new Date() })
       .where(eq(adminAlertDeliveries.id, delivery.id))
     try {
-      const providerMessageId = await sendWhatsAppTemplate(
+      const providerMessageId = await sendWhatsApp(
         delivery.recipient,
-        delivery.payload as HotWalletAlertPayload,
+        delivery.category,
+        delivery.payload as AdminAlertPayload,
       )
       const now = new Date()
       await db.transaction(async (tx) => {
@@ -285,8 +428,71 @@ export async function queueAdminAlertTest(recipient: string) {
         sourceAddress: 'TEST',
         txHash: 'Configuration test — no funds moved',
         sourceType: 'TEST',
-      } satisfies HotWalletAlertPayload,
+      } satisfies AdminAlertPayload,
     })
     .returning({ id: adminAlertDeliveries.id })
     .then((rows) => rows.at(0))
+}
+
+export async function queueWithdrawalRequestedAdminAlerts(
+  withdrawalId: string,
+) {
+  const db = getDb()
+  const [settings, withdrawal] = await Promise.all([
+    db
+      .select()
+      .from(adminAlertSettings)
+      .where(eq(adminAlertSettings.id, 1))
+      .limit(1)
+      .then((rows) => rows.at(0)),
+    db
+      .select({
+        id: withdrawals.id,
+        amount: withdrawals.amount,
+        feeAmount: withdrawals.feeAmount,
+        netAmount: withdrawals.netAmount,
+        destinationAddress: withdrawals.destinationAddress,
+        network: withdrawals.network,
+        userName: users.displayName,
+        userEmail: users.email,
+      })
+      .from(withdrawals)
+      .innerJoin(users, eq(users.id, withdrawals.userId))
+      .where(eq(withdrawals.id, withdrawalId))
+      .limit(1)
+      .then((rows) => rows.at(0)),
+  ])
+  if (!settings?.notifyWithdrawalRequests || !withdrawal) return false
+  const payload: AdminAlertPayload = {
+    amount: withdrawal.amount,
+    asset: 'USDT',
+    feeAmount: withdrawal.feeAmount,
+    netAmount: withdrawal.netAmount,
+    destinationAddress: withdrawal.destinationAddress,
+    withdrawalId: withdrawal.id,
+    userName: withdrawal.userName,
+    userEmail: withdrawal.userEmail,
+  }
+  if (settings.adminPushEnabled) {
+    await notifyAdmins({
+      category: 'WITHDRAWAL',
+      title: 'Withdrawal approval requested',
+      body: `${withdrawal.userName} requested ${Number(withdrawal.amount).toFixed(2)} USDT to ${withdrawal.destinationAddress}.`,
+      href: '/admin/custody',
+      eventKey: `admin-withdrawal-requested:${withdrawal.id}`,
+    })
+  }
+  if (settings.whatsappEnabled && settings.whatsappRecipient) {
+    await db
+      .insert(adminAlertDeliveries)
+      .values({
+        eventKey: `withdrawal-requested:${withdrawal.id}`,
+        category: 'WITHDRAWAL_REQUESTED',
+        recipient: normalizePhone(settings.whatsappRecipient),
+        payload,
+      })
+      .onConflictDoNothing()
+  }
+  await processAdminAlertOutbox(10)
+  return true
 }

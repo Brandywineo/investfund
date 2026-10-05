@@ -12,6 +12,8 @@ import {
   processAdminAlertOutbox,
   queueAdminAlertTest,
   whatsappAlertsConfigured,
+  whatsappProvider,
+  whatsappProviderStatus,
 } from './admin-alert.service'
 import { getSessionUser } from './session'
 
@@ -79,6 +81,8 @@ export const getAdminAlertSettings = createServerFn({ method: 'GET' }).handler(
       deliveries,
       counts: Object.fromEntries(counts.map((row) => [row.status, row.count])),
       providerConfigured: whatsappAlertsConfigured(),
+      provider: whatsappProvider(),
+      providerStatus: await whatsappProviderStatus(),
       templateName:
         process.env.WHATSAPP_TEMPLATE_NAME || 'investfund_hot_wallet_deposit',
     }
@@ -89,9 +93,11 @@ export const updateAdminAlertSettings = createServerFn({ method: 'POST' })
   .validator(
     z.object({
       whatsappEnabled: z.boolean(),
+      adminPushEnabled: z.boolean(),
       whatsappRecipient: z.union([phoneSchema, z.literal('')]),
       notifyUserSweeps: z.boolean(),
       notifyDirectHotDeposits: z.boolean(),
+      notifyWithdrawalRequests: z.boolean(),
       minimumAlertAmount: z.number().min(0.1).max(1_000_000_000),
       supportEmail: z.string().trim().toLowerCase().email().max(254),
       supportEmailEnabled: z.boolean(),
@@ -111,10 +117,12 @@ export const updateAdminAlertSettings = createServerFn({ method: 'POST' })
       .limit(1)
       .then((rows) => rows.at(0))
     const alertValues = {
+      adminPushEnabled: data.adminPushEnabled,
       whatsappEnabled: data.whatsappEnabled,
       whatsappRecipient: data.whatsappRecipient || null,
       notifyUserSweeps: data.notifyUserSweeps,
       notifyDirectHotDeposits: data.notifyDirectHotDeposits,
+      notifyWithdrawalRequests: data.notifyWithdrawalRequests,
       minimumAlertAmount: data.minimumAlertAmount.toFixed(8),
       updatedBy: admin.id,
       updatedAt: new Date(),
@@ -151,8 +159,10 @@ export const updateAdminAlertSettings = createServerFn({ method: 'POST' })
             }
           : null,
         after: {
+          adminPushEnabled: data.adminPushEnabled,
           whatsappEnabled: data.whatsappEnabled,
           whatsappRecipient: data.whatsappRecipient || null,
+          notifyWithdrawalRequests: data.notifyWithdrawalRequests,
           supportEmail: data.supportEmail,
           supportEmailEnabled: data.supportEmailEnabled,
         },

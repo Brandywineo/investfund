@@ -1,0 +1,19 @@
+[Unit]
+Description=InvestFund loopback-only WhatsApp administrator alert bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deno
+Group=deno
+WorkingDirectory=/home/deno/web/ndumb.hs.vc/public_html
+EnvironmentFile=/home/deno/web/ndumb.hs.vc/public_html/.env
+ExecStart=/home/deno/.bun/bin/bun run whatsapp:bridge
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

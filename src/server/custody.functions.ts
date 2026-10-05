@@ -38,6 +38,7 @@ import {
 } from './custody.service'
 import { getSessionUser } from './session'
 import { notifyUser } from './notification.service'
+import { queueWithdrawalRequestedAdminAlerts } from './admin-alert.service'
 import { requestWalletSweep } from './signer-api'
 import { getOrCreateWalletAddress } from './wallet-address.service'
 
@@ -176,6 +177,14 @@ export const requestWithdrawal = createServerFn({ method: 'POST' })
       network: settings.network,
       feePercent: investmentSettings?.withdrawalFeePercent ?? '5',
     })
+    try {
+      await queueWithdrawalRequestedAdminAlerts(withdrawal.id)
+    } catch (cause) {
+      console.error(
+        'Administrator withdrawal alert failed without affecting the request',
+        cause,
+      )
+    }
     return { success: true, withdrawalId: withdrawal.id }
   })
 

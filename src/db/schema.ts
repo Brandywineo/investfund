@@ -381,10 +381,14 @@ export const platformSettings = pgTable('platform_settings', {
 
 export const adminAlertSettings = pgTable('admin_alert_settings', {
   id: integer('id').primaryKey().default(1),
+  adminPushEnabled: boolean('admin_push_enabled').default(true).notNull(),
   whatsappEnabled: boolean('whatsapp_enabled').default(false).notNull(),
   whatsappRecipient: text('whatsapp_recipient'),
   notifyUserSweeps: boolean('notify_user_sweeps').default(true).notNull(),
   notifyDirectHotDeposits: boolean('notify_direct_hot_deposits')
+    .default(true)
+    .notNull(),
+  notifyWithdrawalRequests: boolean('notify_withdrawal_requests')
     .default(true)
     .notNull(),
   minimumAlertAmount: numeric('minimum_alert_amount', {

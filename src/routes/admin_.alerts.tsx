@@ -59,10 +59,13 @@ function AdminAlertsPage() {
         updateAdminAlertSettings({
           data: {
             whatsappEnabled: form.get('whatsappEnabled') === 'on',
+            adminPushEnabled: form.get('adminPushEnabled') === 'on',
             whatsappRecipient: String(form.get('whatsappRecipient') || ''),
             notifyUserSweeps: form.get('notifyUserSweeps') === 'on',
             notifyDirectHotDeposits:
               form.get('notifyDirectHotDeposits') === 'on',
+            notifyWithdrawalRequests:
+              form.get('notifyWithdrawalRequests') === 'on',
             minimumAlertAmount: Number(form.get('minimumAlertAmount')),
             supportEmail: String(form.get('supportEmail')),
             supportEmailEnabled: form.get('supportEmailEnabled') === 'on',
@@ -116,10 +119,28 @@ function AdminAlertsPage() {
         )}
 
         <section className="mt-7 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-          <Metric label="Provider" value="WhatsApp" />
           <Metric
-            label="Configuration"
-            value={data.providerConfigured ? 'Ready' : 'Server setup required'}
+            label="WhatsApp provider"
+            value={
+              data.provider === 'WEB_BRIDGE'
+                ? 'Local web bridge'
+                : data.provider === 'META'
+                  ? 'Meta Cloud API'
+                  : 'Not configured'
+            }
+          />
+          <Metric
+            label="Connection"
+            value={
+              data.providerStatus === 'CONNECTED' ||
+              data.providerStatus === 'READY'
+                ? 'Connected'
+                : data.providerStatus === 'QR_REQUIRED'
+                  ? 'Scan QR code'
+                  : data.providerConfigured
+                    ? data.providerStatus
+                    : 'Server setup required'
+            }
           />
           <Metric label="Sent" value={data.counts.SENT ?? 0} />
           <Metric label="Failed" value={data.counts.FAILED ?? 0} />
@@ -127,9 +148,8 @@ function AdminAlertsPage() {
 
         {!data.providerConfigured ? (
           <p className="mt-5 rounded-2xl bg-amber-50 p-4 text-sm text-amber-800">
-            Add WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID to the server
-            environment before enabling alerts. The expected approved template
-            is <b>{data.templateName}</b>.
+            Configure either the loopback WhatsApp Web bridge or Meta Cloud API
+            before enabling WhatsApp delivery.
           </p>
         ) : null}
 
@@ -165,6 +185,11 @@ function AdminAlertsPage() {
             </label>
             <div className="mt-5 space-y-3 rounded-2xl bg-[#f8faf7] p-4 text-sm">
               <Check
+                name="adminPushEnabled"
+                label="Enable real-time administrator PWA alerts"
+                checked={settings?.adminPushEnabled ?? true}
+              />
+              <Check
                 name="whatsappEnabled"
                 label="Enable private WhatsApp alerts"
                 checked={settings?.whatsappEnabled ?? false}
@@ -178,6 +203,11 @@ function AdminAlertsPage() {
                 name="notifyDirectHotDeposits"
                 label="Alert for direct external deposits into a hot wallet"
                 checked={settings?.notifyDirectHotDeposits ?? true}
+              />
+              <Check
+                name="notifyWithdrawalRequests"
+                label="Alert when a user requests a withdrawal"
+                checked={settings?.notifyWithdrawalRequests ?? true}
               />
             </div>
             <p className="mt-4 text-xs leading-5 text-[#6e857a]">
