@@ -26,6 +26,7 @@ import { Route as TradingRouteImport } from './routes/trading'
 import { Route as VerifyEmailRouteImport } from './routes/verify-email'
 import { Route as VerifyPendingRouteImport } from './routes/verify-pending'
 import { Route as WalletRouteImport } from './routes/wallet'
+import { Route as AdminAlertsRouteImport } from './routes/admin_.alerts'
 import { Route as AdminCustodyRouteImport } from './routes/admin_.custody'
 import { Route as AdminEmailRouteImport } from './routes/admin_.email'
 import { Route as AdminExitsRouteImport } from './routes/admin_.exits'
@@ -122,6 +123,11 @@ const WalletRoute = WalletRouteImport.update({
   path: '/wallet',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminAlertsRoute = AdminAlertsRouteImport.update({
+  id: '/admin_/alerts',
+  path: '/admin/alerts',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminCustodyRoute = AdminCustodyRouteImport.update({
   id: '/admin_/custody',
   path: '/admin/custody',
@@ -191,6 +197,7 @@ export interface FileRoutesByFullPath {
   '/verify-email': typeof VerifyEmailRoute
   '/verify-pending': typeof VerifyPendingRoute
   '/wallet': typeof WalletRoute
+  '/admin/alerts': typeof AdminAlertsRoute
   '/admin/custody': typeof AdminCustodyRoute
   '/admin/email': typeof AdminEmailRoute
   '/admin/exits': typeof AdminExitsRoute
@@ -220,6 +227,7 @@ export interface FileRoutesByTo {
   '/verify-email': typeof VerifyEmailRoute
   '/verify-pending': typeof VerifyPendingRoute
   '/wallet': typeof WalletRoute
+  '/admin/alerts': typeof AdminAlertsRoute
   '/admin/custody': typeof AdminCustodyRoute
   '/admin/email': typeof AdminEmailRoute
   '/admin/exits': typeof AdminExitsRoute
@@ -250,6 +258,7 @@ export interface FileRoutesById {
   '/verify-email': typeof VerifyEmailRoute
   '/verify-pending': typeof VerifyPendingRoute
   '/wallet': typeof WalletRoute
+  '/admin_/alerts': typeof AdminAlertsRoute
   '/admin_/custody': typeof AdminCustodyRoute
   '/admin_/email': typeof AdminEmailRoute
   '/admin_/exits': typeof AdminExitsRoute
@@ -281,6 +290,7 @@ export interface FileRouteTypes {
     | '/verify-email'
     | '/verify-pending'
     | '/wallet'
+    | '/admin/alerts'
     | '/admin/custody'
     | '/admin/email'
     | '/admin/exits'
@@ -310,6 +320,7 @@ export interface FileRouteTypes {
     | '/verify-email'
     | '/verify-pending'
     | '/wallet'
+    | '/admin/alerts'
     | '/admin/custody'
     | '/admin/email'
     | '/admin/exits'
@@ -339,6 +350,7 @@ export interface FileRouteTypes {
     | '/verify-email'
     | '/verify-pending'
     | '/wallet'
+    | '/admin_/alerts'
     | '/admin_/custody'
     | '/admin_/email'
     | '/admin_/exits'
@@ -369,6 +381,7 @@ export interface RootRouteChildren {
   VerifyEmailRoute: typeof VerifyEmailRoute
   VerifyPendingRoute: typeof VerifyPendingRoute
   WalletRoute: typeof WalletRoute
+  AdminAlertsRoute: typeof AdminAlertsRoute
   AdminCustodyRoute: typeof AdminCustodyRoute
   AdminEmailRoute: typeof AdminEmailRoute
   AdminExitsRoute: typeof AdminExitsRoute
@@ -502,6 +515,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WalletRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin_/alerts': {
+      id: '/admin_/alerts'
+      path: '/admin/alerts'
+      fullPath: '/admin/alerts'
+      preLoaderRoute: typeof AdminAlertsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin_/custody': {
       id: '/admin_/custody'
       path: '/admin/custody'
@@ -593,6 +613,7 @@ const rootRouteChildren: RootRouteChildren = {
   VerifyEmailRoute: VerifyEmailRoute,
   VerifyPendingRoute: VerifyPendingRoute,
   WalletRoute: WalletRoute,
+  AdminAlertsRoute: AdminAlertsRoute,
   AdminCustodyRoute: AdminCustodyRoute,
   AdminEmailRoute: AdminEmailRoute,
   AdminExitsRoute: AdminExitsRoute,

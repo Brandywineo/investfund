@@ -1,6 +1,7 @@
 import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
 import appCss from '../styles.css?url'
 import { PwaRuntime } from '#/components/PwaRuntime'
+import { SupportContact } from '#/components/SupportContact'
 
 export const Route = createRootRoute({
   head: () => ({
@@ -40,6 +41,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       </head>
       <body>
         {children}
+        <SupportContact />
         <PwaRuntime />
         <Scripts />
       </body>

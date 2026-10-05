@@ -34,6 +34,10 @@ import {
   settleBroadcastWithdrawal,
 } from './custody.service'
 import { settleControlledWalletTransfer } from './controlled-wallet-transfer.service'
+import {
+  processAdminAlertOutbox,
+  queueConfirmedHotWalletAlerts,
+} from './admin-alert.service'
 import { RpcPool } from './rpc-pool'
 import {
   getSignerPlatformWallets,
@@ -864,6 +868,16 @@ async function runChainWorkerBatch() {
           sql`${platformWalletTransactions.blockNumber} is not null and ${platformWalletTransactions.blockNumber} <= ${finalized}`,
         ),
       )
+
+    try {
+      await queueConfirmedHotWalletAlerts()
+      await processAdminAlertOutbox(10)
+    } catch (cause) {
+      console.error(
+        'Administrator alert processing failed without interrupting the chain scan',
+        cause,
+      )
+    }
 
     if (fromBlock <= toBlock && addressRows.length > 0) {
       // Some public BSC nodes reject OR filters containing multiple recipient

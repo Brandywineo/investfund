@@ -158,6 +158,12 @@ export const emailDeliveryStatus = pgEnum('email_delivery_status', [
   'SENT',
   'FAILED',
 ])
+export const adminAlertDeliveryStatus = pgEnum('admin_alert_delivery_status', [
+  'PENDING',
+  'PROCESSING',
+  'SENT',
+  'FAILED',
+])
 
 const timestamps = {
   createdAt: timestamp('created_at', { withTimezone: true })
@@ -366,8 +372,64 @@ export const platformSettings = pgTable('platform_settings', {
   })
     .default('5')
     .notNull(),
+  supportEmail: text('support_email')
+    .default('support@investfund.site')
+    .notNull(),
+  supportEmailEnabled: boolean('support_email_enabled').default(true).notNull(),
   ...timestamps,
 })
+
+export const adminAlertSettings = pgTable('admin_alert_settings', {
+  id: integer('id').primaryKey().default(1),
+  whatsappEnabled: boolean('whatsapp_enabled').default(false).notNull(),
+  whatsappRecipient: text('whatsapp_recipient'),
+  notifyUserSweeps: boolean('notify_user_sweeps').default(true).notNull(),
+  notifyDirectHotDeposits: boolean('notify_direct_hot_deposits')
+    .default(true)
+    .notNull(),
+  minimumAlertAmount: numeric('minimum_alert_amount', {
+    precision: 20,
+    scale: 8,
+  })
+    .default('0.10')
+    .notNull(),
+  updatedBy: uuid('updated_by').references(() => users.id),
+  lastSuccessfulDeliveryAt: timestamp('last_successful_delivery_at', {
+    withTimezone: true,
+  }),
+  lastFailureAt: timestamp('last_failure_at', { withTimezone: true }),
+  lastFailureReason: text('last_failure_reason'),
+  ...timestamps,
+})
+
+export const adminAlertDeliveries = pgTable(
+  'admin_alert_deliveries',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    eventKey: text('event_key').notNull(),
+    channel: text('channel').default('WHATSAPP').notNull(),
+    category: text('category').notNull(),
+    recipient: text('recipient').notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    status: adminAlertDeliveryStatus('status').default('PENDING').notNull(),
+    attempts: integer('attempts').default(0).notNull(),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    providerMessageId: text('provider_message_id'),
+    failureReason: text('failure_reason'),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('admin_alert_deliveries_event_unique').on(table.eventKey),
+    index('admin_alert_deliveries_status_next_idx').on(
+      table.status,
+      table.nextAttemptAt,
+    ),
+    index('admin_alert_deliveries_created_idx').on(table.createdAt),
+  ],
+)
 
 export const custodySettings = pgTable('custody_settings', {
   id: integer('id').primaryKey().default(1),
