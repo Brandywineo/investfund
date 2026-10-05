@@ -254,406 +254,477 @@ function CustodyAdminPage() {
           </div>
           <span className="font-bold text-[#d9ff71]">Open withdrawals →</span>
         </Link>
-        <div className="mt-5 grid gap-5 lg:grid-cols-2">
+        <details className="mt-5 rounded-[2rem] bg-white p-2 ring-1 ring-black/5">
+          <summary className="cursor-pointer list-none rounded-[1.5rem] px-5 py-4 font-semibold marker:hidden">
+            <span className="flex items-center justify-between gap-4">
+              <span>
+                Wallet policy and treasury transfer tools
+                <small className="mt-1 block font-normal text-[#6e857a]">
+                  Network settings, reserve policy and outbound capital
+                </small>
+              </span>
+              <span className="text-xl text-[#6e857a]">＋</span>
+            </span>
+          </summary>
+          <div className="grid gap-5 p-2 lg:grid-cols-2">
+            <form
+              onSubmit={settings}
+              className="rounded-[2rem] bg-white p-6 ring-1 ring-black/5"
+            >
+              <h2 className="text-xl font-semibold">
+                Wallet and reserve policy
+              </h2>
+              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                <label className="text-sm font-semibold">
+                  Network
+                  <input
+                    name="network"
+                    defaultValue={data.settings.network}
+                    className={input}
+                  />
+                </label>
+                <label className="text-sm font-semibold">
+                  Confirmations
+                  <input
+                    name="confirmations"
+                    type="number"
+                    defaultValue={data.settings.confirmationThreshold}
+                    className={input}
+                  />
+                </label>
+                <label className="text-sm font-semibold">
+                  Chain ID
+                  <input
+                    name="chainId"
+                    type="number"
+                    defaultValue={data.settings.chainId}
+                    className={input}
+                  />
+                </label>
+                <label className="text-sm font-semibold sm:col-span-2">
+                  USDT token contract
+                  <input
+                    name="tokenContract"
+                    defaultValue={data.settings.tokenContractAddress || ''}
+                    className={input}
+                  />
+                </label>
+                <label className="text-sm font-semibold sm:col-span-2">
+                  Main deposit address
+                  <input
+                    name="address"
+                    defaultValue={data.settings.depositAddress || ''}
+                    className={input}
+                  />
+                </label>
+                <label className="text-sm font-semibold">
+                  Fixed reserve
+                  <input
+                    name="fixed"
+                    type="number"
+                    step="0.01"
+                    defaultValue={data.settings.reserveFixed}
+                    className={input}
+                  />
+                </label>
+                <label className="text-sm font-semibold">
+                  Reserve percentage
+                  <input
+                    name="percent"
+                    type="number"
+                    step="0.01"
+                    defaultValue={data.settings.reservePercent}
+                    className={input}
+                  />
+                </label>
+                <label className="text-sm font-semibold">
+                  Minimum automatic sweep
+                  <input
+                    name="minimumSweep"
+                    type="number"
+                    step="0.01"
+                    defaultValue={data.settings.minimumSweepAmount}
+                    className={input}
+                  />
+                </label>
+                <label className="text-sm font-semibold">
+                  Minimum credited deposit
+                  <input
+                    name="minimumCreditedDeposit"
+                    type="number"
+                    min="0.00000001"
+                    step="0.00000001"
+                    defaultValue={data.settings.minimumCreditedDepositAmount}
+                    className={input}
+                  />
+                  <span className="mt-1 block text-xs font-normal text-black/50">
+                    Smaller positive transfers are recorded as dust and never
+                    credited or swept.
+                  </span>
+                </label>
+                <label className="text-sm font-semibold">
+                  Minimum withdrawal
+                  <input
+                    name="minimumWithdrawal"
+                    type="number"
+                    step="0.01"
+                    defaultValue={data.settings.minimumWithdrawalAmount}
+                    className={input}
+                  />
+                </label>
+                <label className="flex items-center gap-3 text-sm font-semibold sm:col-span-2">
+                  <input
+                    name="autoSweep"
+                    type="checkbox"
+                    defaultChecked={data.settings.autoSweepEnabled}
+                  />
+                  Automatically sweep finalized deposits
+                </label>
+              </div>
+              <button
+                disabled={busy}
+                className="mt-5 w-full rounded-xl bg-[#123d2d] py-3 font-bold text-white"
+              >
+                Save policy
+              </button>
+            </form>
+            <form
+              onSubmit={transfer}
+              className="rounded-[2rem] bg-[#123d2d] p-6 text-white"
+            >
+              <h2 className="text-xl font-semibold">
+                Admin hot-wallet transfer
+              </h2>
+              <label className="mt-5 block text-sm font-semibold">
+                Purpose
+                <select name="purpose" className={`${input} text-[#10251c]`}>
+                  <option value="MT5_CAPITAL">MT5 capital</option>
+                  <option value="ADMIN_RESERVE">Admin reserve wallet</option>
+                  <option value="WITHDRAWAL_LIQUIDITY">
+                    Withdrawal liquidity wallet
+                  </option>
+                  <option value="OPERATIONS">Operations</option>
+                  <option value="OTHER">Other</option>
+                </select>
+              </label>
+              <label className="mt-5 block text-sm font-semibold">
+                Amount
+                <input
+                  name="amount"
+                  required
+                  className={`${input} text-[#10251c]`}
+                />
+              </label>
+              <label className="relative mt-4 block text-sm font-semibold">
+                Destination BEP20 wallet
+                <input
+                  name="destination"
+                  required
+                  placeholder="0x..."
+                  value={treasuryDestination}
+                  onChange={(event) =>
+                    setTreasuryDestination(event.target.value)
+                  }
+                  className={`${input} pr-24 font-mono text-sm text-[#10251c]`}
+                />
+                <PasteButton onPaste={setTreasuryDestination} />
+              </label>
+              <label className="mt-4 block text-sm font-semibold">
+                Reason
+                <input
+                  name="reason"
+                  required
+                  placeholder="Capital allocation to MT5 account..."
+                  className={`${input} text-[#10251c]`}
+                />
+              </label>
+              <button
+                disabled={busy}
+                className="mt-5 w-full rounded-xl bg-[#d9ff71] py-3 font-bold text-[#123d2d]"
+              >
+                Review transfer
+              </button>
+              <p className="mt-3 text-xs text-white/55">
+                Treasury transfers are unrestricted but fully audited. Approval
+                broadcasts automatically through the isolated signer.
+              </p>
+            </form>
+          </div>
+        </details>
+        <details className="mt-5 rounded-[2rem] bg-white p-2 ring-1 ring-black/5">
+          <summary className="cursor-pointer list-none rounded-[1.5rem] px-5 py-4 font-semibold marker:hidden">
+            <span className="flex items-center justify-between gap-4">
+              <span>
+                Manual accounting entries
+                <small className="mt-1 block font-normal text-[#6e857a]">
+                  Record MT5 returns or administrator-confirmed deposits
+                </small>
+              </span>
+              <span className="text-xl text-[#6e857a]">＋</span>
+            </span>
+          </summary>
           <form
-            onSubmit={settings}
-            className="rounded-[2rem] bg-white p-6 ring-1 ring-black/5"
+            onSubmit={treasuryReturn}
+            className="mt-5 rounded-[2rem] bg-white p-6 ring-1 ring-black/5"
           >
-            <h2 className="text-xl font-semibold">Wallet and reserve policy</h2>
-            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+            <h2 className="text-xl font-semibold">
+              Record MT5 capital or profit return
+            </h2>
+            <div className="mt-4 grid gap-4 md:grid-cols-3">
               <label className="text-sm font-semibold">
-                Network
-                <input
-                  name="network"
-                  defaultValue={data.settings.network}
-                  className={input}
-                />
+                Amount
+                <input name="amount" required className={input} />
               </label>
               <label className="text-sm font-semibold">
-                Confirmations
-                <input
-                  name="confirmations"
-                  type="number"
-                  defaultValue={data.settings.confirmationThreshold}
-                  className={input}
-                />
+                Incoming blockchain TXID
+                <input name="txHash" required className={input} />
               </label>
               <label className="text-sm font-semibold">
-                Chain ID
+                Reason
                 <input
-                  name="chainId"
-                  type="number"
-                  defaultValue={data.settings.chainId}
+                  name="reason"
+                  required
+                  placeholder="MT5 capital and profit return"
                   className={input}
                 />
-              </label>
-              <label className="text-sm font-semibold sm:col-span-2">
-                USDT token contract
-                <input
-                  name="tokenContract"
-                  defaultValue={data.settings.tokenContractAddress || ''}
-                  className={input}
-                />
-              </label>
-              <label className="text-sm font-semibold sm:col-span-2">
-                Main deposit address
-                <input
-                  name="address"
-                  defaultValue={data.settings.depositAddress || ''}
-                  className={input}
-                />
-              </label>
-              <label className="text-sm font-semibold">
-                Fixed reserve
-                <input
-                  name="fixed"
-                  type="number"
-                  step="0.01"
-                  defaultValue={data.settings.reserveFixed}
-                  className={input}
-                />
-              </label>
-              <label className="text-sm font-semibold">
-                Reserve percentage
-                <input
-                  name="percent"
-                  type="number"
-                  step="0.01"
-                  defaultValue={data.settings.reservePercent}
-                  className={input}
-                />
-              </label>
-              <label className="text-sm font-semibold">
-                Minimum automatic sweep
-                <input
-                  name="minimumSweep"
-                  type="number"
-                  step="0.01"
-                  defaultValue={data.settings.minimumSweepAmount}
-                  className={input}
-                />
-              </label>
-              <label className="text-sm font-semibold">
-                Minimum credited deposit
-                <input
-                  name="minimumCreditedDeposit"
-                  type="number"
-                  min="0.00000001"
-                  step="0.00000001"
-                  defaultValue={data.settings.minimumCreditedDepositAmount}
-                  className={input}
-                />
-                <span className="mt-1 block text-xs font-normal text-black/50">
-                  Smaller positive transfers are recorded as dust and never
-                  credited or swept.
-                </span>
-              </label>
-              <label className="text-sm font-semibold">
-                Minimum withdrawal
-                <input
-                  name="minimumWithdrawal"
-                  type="number"
-                  step="0.01"
-                  defaultValue={data.settings.minimumWithdrawalAmount}
-                  className={input}
-                />
-              </label>
-              <label className="flex items-center gap-3 text-sm font-semibold sm:col-span-2">
-                <input
-                  name="autoSweep"
-                  type="checkbox"
-                  defaultChecked={data.settings.autoSweepEnabled}
-                />
-                Automatically sweep finalized deposits
               </label>
             </div>
             <button
               disabled={busy}
-              className="mt-5 w-full rounded-xl bg-[#123d2d] py-3 font-bold text-white"
+              className="mt-5 rounded-xl bg-[#123d2d] px-6 py-3 font-bold text-white"
             >
-              Save policy
+              Record confirmed return
             </button>
           </form>
           <form
-            onSubmit={transfer}
-            className="rounded-[2rem] bg-[#123d2d] p-6 text-white"
+            onSubmit={manualDeposit}
+            className="mt-5 rounded-[2rem] bg-[#fff8dd] p-6 ring-1 ring-amber-900/10"
           >
-            <h2 className="text-xl font-semibold">Admin hot-wallet transfer</h2>
-            <label className="mt-5 block text-sm font-semibold">
-              Purpose
-              <select name="purpose" className={`${input} text-[#10251c]`}>
-                <option value="MT5_CAPITAL">MT5 capital</option>
-                <option value="ADMIN_RESERVE">Admin reserve wallet</option>
-                <option value="WITHDRAWAL_LIQUIDITY">
-                  Withdrawal liquidity wallet
-                </option>
-                <option value="OPERATIONS">Operations</option>
-                <option value="OTHER">Other</option>
-              </select>
-            </label>
-            <label className="mt-5 block text-sm font-semibold">
-              Amount
+            <p className="text-xs font-bold uppercase tracking-[.14em] text-amber-800">
+              Administrator-trusted record
+            </p>
+            <h2 className="mt-2 text-xl font-semibold">
+              Record confirmed user deposit
+            </h2>
+            <p className="mt-2 text-sm text-[#6e857a]">
+              This immediately credits the user. The TXID is stored as entered
+              and is not checked against the blockchain.
+            </p>
+            <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <label className="text-sm font-semibold">
+                User
+                <select
+                  name="userId"
+                  required
+                  className={input}
+                  defaultValue=""
+                >
+                  <option value="" disabled>
+                    Select a user
+                  </option>
+                  {data.users.map((user) => (
+                    <option
+                      key={user.id}
+                      value={user.id}
+                      disabled={user.status === 'SUSPENDED'}
+                    >
+                      {user.displayName} · {user.email}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-sm font-semibold">
+                Amount (USDT)
+                <input
+                  name="amount"
+                  inputMode="decimal"
+                  required
+                  className={input}
+                />
+              </label>
+              <label className="text-sm font-semibold">
+                Received into
+                <select name="receivedInto" required className={input}>
+                  <option value="HOT_WALLET">Platform hot wallet</option>
+                  <option value="ADMIN_CUSTODY">
+                    Admin-controlled custody
+                  </option>
+                </select>
+              </label>
+              <label className="text-sm font-semibold md:col-span-2">
+                Transaction ID
+                <input
+                  name="txHash"
+                  minLength={8}
+                  required
+                  className={`${input} font-mono`}
+                />
+              </label>
+              <label className="text-sm font-semibold">
+                Received at
+                <input
+                  name="receivedAt"
+                  type="datetime-local"
+                  required
+                  defaultValue={new Date(
+                    Date.now() - new Date().getTimezoneOffset() * 60_000,
+                  )
+                    .toISOString()
+                    .slice(0, 16)}
+                  className={input}
+                />
+              </label>
+              <label className="text-sm font-semibold md:col-span-2 lg:col-span-3">
+                Internal note / reason
+                <textarea
+                  name="note"
+                  required
+                  minLength={3}
+                  placeholder="How the payment was received and what the administrator verified"
+                  className={`${input} min-h-24`}
+                />
+              </label>
+            </div>
+            <label className="mt-4 flex items-start gap-3 text-sm font-semibold">
               <input
-                name="amount"
+                name="confirmed"
+                type="checkbox"
                 required
-                className={`${input} text-[#10251c]`}
+                className="mt-1"
               />
-            </label>
-            <label className="relative mt-4 block text-sm font-semibold">
-              Destination BEP20 wallet
-              <input
-                name="destination"
-                required
-                placeholder="0x..."
-                value={treasuryDestination}
-                onChange={(event) => setTreasuryDestination(event.target.value)}
-                className={`${input} pr-24 font-mono text-sm text-[#10251c]`}
-              />
-              <PasteButton onPaste={setTreasuryDestination} />
-            </label>
-            <label className="mt-4 block text-sm font-semibold">
-              Reason
-              <input
-                name="reason"
-                required
-                placeholder="Capital allocation to MT5 account..."
-                className={`${input} text-[#10251c]`}
-              />
+              I have verified this record and understand that submitting it
+              immediately increases the user’s available balance.
             </label>
             <button
               disabled={busy}
-              className="mt-5 w-full rounded-xl bg-[#d9ff71] py-3 font-bold text-[#123d2d]"
+              className="mt-5 rounded-xl bg-[#123d2d] px-6 py-3 font-bold text-white"
             >
-              Review transfer
+              Record and credit deposit
             </button>
-            <p className="mt-3 text-xs text-white/55">
-              Treasury transfers are unrestricted but fully audited. Approval
-              broadcasts automatically through the isolated signer.
-            </p>
           </form>
-        </div>
-        <form
-          onSubmit={treasuryReturn}
-          className="mt-5 rounded-[2rem] bg-white p-6 ring-1 ring-black/5"
-        >
-          <h2 className="text-xl font-semibold">
-            Record MT5 capital or profit return
-          </h2>
-          <div className="mt-4 grid gap-4 md:grid-cols-3">
-            <label className="text-sm font-semibold">
-              Amount
-              <input name="amount" required className={input} />
-            </label>
-            <label className="text-sm font-semibold">
-              Incoming blockchain TXID
-              <input name="txHash" required className={input} />
-            </label>
-            <label className="text-sm font-semibold">
-              Reason
-              <input
-                name="reason"
-                required
-                placeholder="MT5 capital and profit return"
-                className={input}
-              />
-            </label>
-          </div>
-          <button
-            disabled={busy}
-            className="mt-5 rounded-xl bg-[#123d2d] px-6 py-3 font-bold text-white"
-          >
-            Record confirmed return
-          </button>
-        </form>
-        <form
-          onSubmit={manualDeposit}
-          className="mt-5 rounded-[2rem] bg-[#fff8dd] p-6 ring-1 ring-amber-900/10"
-        >
-          <p className="text-xs font-bold uppercase tracking-[.14em] text-amber-800">
-            Administrator-trusted record
-          </p>
-          <h2 className="mt-2 text-xl font-semibold">
-            Record confirmed user deposit
-          </h2>
-          <p className="mt-2 text-sm text-[#6e857a]">
-            This immediately credits the user. The TXID is stored as entered and
-            is not checked against the blockchain.
-          </p>
-          <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            <label className="text-sm font-semibold">
-              User
-              <select name="userId" required className={input} defaultValue="">
-                <option value="" disabled>
-                  Select a user
-                </option>
-                {data.users.map((user) => (
-                  <option
-                    key={user.id}
-                    value={user.id}
-                    disabled={user.status === 'SUSPENDED'}
-                  >
-                    {user.displayName} · {user.email}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="text-sm font-semibold">
-              Amount (USDT)
-              <input
-                name="amount"
-                inputMode="decimal"
-                required
-                className={input}
-              />
-            </label>
-            <label className="text-sm font-semibold">
-              Received into
-              <select name="receivedInto" required className={input}>
-                <option value="HOT_WALLET">Platform hot wallet</option>
-                <option value="ADMIN_CUSTODY">Admin-controlled custody</option>
-              </select>
-            </label>
-            <label className="text-sm font-semibold md:col-span-2">
-              Transaction ID
-              <input
-                name="txHash"
-                minLength={8}
-                required
-                className={`${input} font-mono`}
-              />
-            </label>
-            <label className="text-sm font-semibold">
-              Received at
-              <input
-                name="receivedAt"
-                type="datetime-local"
-                required
-                defaultValue={new Date(
-                  Date.now() - new Date().getTimezoneOffset() * 60_000,
-                )
-                  .toISOString()
-                  .slice(0, 16)}
-                className={input}
-              />
-            </label>
-            <label className="text-sm font-semibold md:col-span-2 lg:col-span-3">
-              Internal note / reason
-              <textarea
-                name="note"
-                required
-                minLength={3}
-                placeholder="How the payment was received and what the administrator verified"
-                className={`${input} min-h-24`}
-              />
-            </label>
-          </div>
-          <label className="mt-4 flex items-start gap-3 text-sm font-semibold">
-            <input name="confirmed" type="checkbox" required className="mt-1" />
-            I have verified this record and understand that submitting it
-            immediately increases the user’s available balance.
-          </label>
-          <button
-            disabled={busy}
-            className="mt-5 rounded-xl bg-[#123d2d] px-6 py-3 font-bold text-white"
-          >
-            Record and credit deposit
-          </button>
-        </form>
-        <Queue title="Deposits">
-          {data.deposits.map((item) => (
-            <Row
-              key={item.id}
-              title={`${item.userEmail} · ${Number(item.amount).toFixed(2)} USDT`}
-              status={item.status}
-              detail={`${item.txHash || 'No transaction hash'}${
-                item.source === 'ADMIN_RECORDED'
-                  ? ` · admin recorded · ${item.receivedInto.replaceAll('_', ' ').toLowerCase()} · ${item.adminNote || 'No internal note'}`
-                  : ''
-              }`}
-            >
-              {item.status === 'PENDING' && (
-                <div className="flex gap-2">
-                  <button
-                    disabled={busy}
-                    onClick={() =>
-                      void run(
-                        () =>
-                          reviewDeposit({
-                            data: { depositId: item.id, action: 'CONFIRM' },
-                          }),
-                        'Deposit confirmed and credited.',
-                      )
-                    }
-                    className="action"
-                  >
-                    Confirm
-                  </button>
-                  <button
-                    disabled={busy}
-                    onClick={() =>
-                      void run(
-                        () =>
-                          reviewDeposit({
-                            data: {
-                              depositId: item.id,
-                              action: 'REJECT',
-                              reason: 'Transaction could not be verified',
-                            },
-                          }),
-                        'Deposit rejected.',
-                      )
-                    }
-                    className="danger"
-                  >
-                    Reject
-                  </button>
-                </div>
-              )}
-            </Row>
-          ))}
-        </Queue>
-        <div className="mt-5 flex items-center justify-between rounded-t-[2rem] bg-white px-6 pt-6">
-          <h2 className="text-xl font-semibold">HD deposit addresses</h2>
-          <select
-            value={addressSort}
-            onChange={(event) => setAddressSort(event.target.value)}
-            className="rounded-xl border border-black/10 px-3 py-2 text-sm"
-          >
-            <option value="registered">Registration order</option>
-            <option value="highest">Highest balance</option>
-            <option value="lowest">Lowest balance</option>
-            <option value="ready">Ready to sweep</option>
-            <option value="recent-deposit">Recent deposit</option>
-          </select>
-        </div>
-        <section className="overflow-hidden rounded-b-[2rem] bg-white ring-1 ring-black/5">
-          <div className="divide-y divide-black/6">
-            {sortedAddresses.map((item) => (
+        </details>
+        <details className="mt-5 rounded-[2rem] bg-white p-2 ring-1 ring-black/5">
+          <summary className="cursor-pointer list-none rounded-[1.5rem] px-5 py-4 font-semibold marker:hidden">
+            <span className="flex items-center justify-between gap-4">
+              <span>
+                Deposit history
+                <small className="mt-1 block font-normal text-[#6e857a]">
+                  {data.deposits.length} recent custody records
+                </small>
+              </span>
+              <span className="text-xl text-[#6e857a]">＋</span>
+            </span>
+          </summary>
+          <Queue title="Deposits">
+            {data.deposits.map((item) => (
               <Row
                 key={item.id}
-                title={item.userEmail}
+                title={`${item.userEmail} · ${Number(item.amount).toFixed(2)} USDT`}
                 status={item.status}
-                detail={`${item.address} · index ${item.derivationIndex} · ${Number(item.tokenBalance).toFixed(8)} USDT · ${Number(item.nativeBalance).toFixed(18)} BNB`}
+                detail={`${item.txHash || 'No transaction hash'}${
+                  item.source === 'ADMIN_RECORDED'
+                    ? ` · admin recorded · ${item.receivedInto.replaceAll('_', ' ').toLowerCase()} · ${item.adminNote || 'No internal note'}`
+                    : ''
+                }`}
               >
-                <div className="flex flex-wrap gap-2">
-                  <CopyButton value={item.address} />
-                  <button
-                    disabled={
-                      busyAddressId === item.id ||
-                      Number(item.tokenBalance) <= 0
-                    }
-                    onClick={() => void runSweep(item.id)}
-                    className="action"
-                  >
-                    {busyAddressId === item.id
-                      ? 'Sweeping…'
-                      : 'Sweep this wallet'}
-                  </button>
-                </div>
+                {item.status === 'PENDING' && (
+                  <div className="flex gap-2">
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        void run(
+                          () =>
+                            reviewDeposit({
+                              data: { depositId: item.id, action: 'CONFIRM' },
+                            }),
+                          'Deposit confirmed and credited.',
+                        )
+                      }
+                      className="action"
+                    >
+                      Confirm
+                    </button>
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        void run(
+                          () =>
+                            reviewDeposit({
+                              data: {
+                                depositId: item.id,
+                                action: 'REJECT',
+                                reason: 'Transaction could not be verified',
+                              },
+                            }),
+                          'Deposit rejected.',
+                        )
+                      }
+                      className="danger"
+                    >
+                      Reject
+                    </button>
+                  </div>
+                )}
               </Row>
             ))}
+          </Queue>
+        </details>
+        <details className="mt-5 rounded-[2rem] bg-white p-2 ring-1 ring-black/5">
+          <summary className="cursor-pointer list-none rounded-[1.5rem] px-5 py-4 font-semibold marker:hidden">
+            <span className="flex items-center justify-between gap-4">
+              <span>
+                HD deposit address inventory
+                <small className="mt-1 block font-normal text-[#6e857a]">
+                  {data.addresses.length} user addresses · open only for balance
+                  review or manual sweep
+                </small>
+              </span>
+              <span className="text-xl text-[#6e857a]">＋</span>
+            </span>
+          </summary>
+          <div className="flex items-center justify-between rounded-t-[2rem] bg-white px-6 pt-6">
+            <h2 className="text-xl font-semibold">HD deposit addresses</h2>
+            <select
+              value={addressSort}
+              onChange={(event) => setAddressSort(event.target.value)}
+              className="rounded-xl border border-black/10 px-3 py-2 text-sm"
+            >
+              <option value="registered">Registration order</option>
+              <option value="highest">Highest balance</option>
+              <option value="lowest">Lowest balance</option>
+              <option value="ready">Ready to sweep</option>
+              <option value="recent-deposit">Recent deposit</option>
+            </select>
           </div>
-        </section>
+          <section className="overflow-hidden rounded-b-[2rem] bg-white ring-1 ring-black/5">
+            <div className="divide-y divide-black/6">
+              {sortedAddresses.map((item) => (
+                <Row
+                  key={item.id}
+                  title={item.userEmail}
+                  status={item.status}
+                  detail={`${item.address} · index ${item.derivationIndex} · ${Number(item.tokenBalance).toFixed(8)} USDT · ${Number(item.nativeBalance).toFixed(18)} BNB`}
+                >
+                  <div className="flex flex-wrap gap-2">
+                    <CopyButton value={item.address} />
+                    <button
+                      disabled={
+                        busyAddressId === item.id ||
+                        Number(item.tokenBalance) <= 0
+                      }
+                      onClick={() => void runSweep(item.id)}
+                      className="action"
+                    >
+                      {busyAddressId === item.id
+                        ? 'Sweeping…'
+                        : 'Sweep this wallet'}
+                    </button>
+                  </div>
+                </Row>
+              ))}
+            </div>
+          </section>
+        </details>
         <section className="mt-5 rounded-[2rem] bg-white p-6 ring-1 ring-black/5">
           <h2 className="text-xl font-semibold">Blockchain watcher</h2>
           <p className="mt-3 text-sm text-[#6e857a]">
@@ -665,93 +736,107 @@ function CustodyAdminPage() {
             {data.watcher?.lastError || ''}
           </p>
         </section>
-        <Queue title="Admin hot-wallet transfers">
-          {data.transfers.map((item) => (
-            <Row
-              key={item.id}
-              title={`${Number(item.amount).toFixed(2)} USDT · ${item.destination}`}
-              status={item.status}
-              detail={`${item.direction} · ${item.purpose} · ${item.reason} · ${item.txHash || item.brokerReference || 'No movement recorded'}`}
-            >
-              <div className="grid min-w-52 gap-2">
-                {item.status === 'DRAFTED' && (
-                  <button
-                    disabled={busy}
-                    onClick={() =>
-                      void run(
-                        () =>
-                          advanceTreasuryTransfer({
-                            data: {
-                              transferId: item.id,
-                              action: 'APPROVE',
-                              reference: 'approved',
-                            },
-                          }),
-                        'Treasury transfer approved and queued for automatic broadcast.',
-                      )
-                    }
-                    className="action"
-                  >
-                    Approve transfer
-                  </button>
-                )}
-                {['APPROVED', 'PROCESSING', 'BROADCAST'].includes(
-                  item.status,
-                ) && (
-                  <p className="rounded-lg bg-amber-50 p-2 text-xs text-amber-800">
-                    Signer/chain confirmation in progress…
-                  </p>
-                )}
-                {item.direction === 'OUTBOUND' &&
-                  item.status === 'CONFIRMED' && (
-                    <>
-                      {refInput(item.id, 'MT5/broker reference')}
-                      <button
-                        disabled={busy}
-                        onClick={() =>
-                          void run(
-                            () =>
-                              advanceTreasuryTransfer({
-                                data: {
-                                  transferId: item.id,
-                                  action: 'BROKER_CREDIT',
-                                  reference: refs[item.id],
-                                },
-                              }),
-                            'Broker credit recorded.',
-                          )
-                        }
-                        className="action"
-                      >
-                        Confirm broker credit
-                      </button>
-                    </>
+        <details className="mt-5 rounded-[2rem] bg-white p-2 ring-1 ring-black/5">
+          <summary className="cursor-pointer list-none rounded-[1.5rem] px-5 py-4 font-semibold marker:hidden">
+            <span className="flex items-center justify-between gap-4">
+              <span>
+                Treasury transfer history
+                <small className="mt-1 block font-normal text-[#6e857a]">
+                  {data.transfers.length} recent movements and reconciliation
+                  records
+                </small>
+              </span>
+              <span className="text-xl text-[#6e857a]">＋</span>
+            </span>
+          </summary>
+          <Queue title="Admin hot-wallet transfers">
+            {data.transfers.map((item) => (
+              <Row
+                key={item.id}
+                title={`${Number(item.amount).toFixed(2)} USDT · ${item.destination}`}
+                status={item.status}
+                detail={`${item.direction} · ${item.purpose} · ${item.reason} · ${item.txHash || item.brokerReference || 'No movement recorded'}`}
+              >
+                <div className="grid min-w-52 gap-2">
+                  {item.status === 'DRAFTED' && (
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        void run(
+                          () =>
+                            advanceTreasuryTransfer({
+                              data: {
+                                transferId: item.id,
+                                action: 'APPROVE',
+                                reference: 'approved',
+                              },
+                            }),
+                          'Treasury transfer approved and queued for automatic broadcast.',
+                        )
+                      }
+                      className="action"
+                    >
+                      Approve transfer
+                    </button>
                   )}
-                {item.status === 'BROKER_CREDITED' && (
-                  <button
-                    disabled={busy}
-                    onClick={() =>
-                      void run(
-                        () =>
-                          advanceTreasuryTransfer({
-                            data: {
-                              transferId: item.id,
-                              action: 'RECONCILE',
-                              reference: 'reconciled',
-                            },
-                          }),
-                        'Transfer reconciled.',
-                      )
-                    }
-                    className="action"
-                  >
-                    Reconcile
-                  </button>
-                )}
-              </div>
-            </Row>
-          ))}
-        </Queue>
+                  {['APPROVED', 'PROCESSING', 'BROADCAST'].includes(
+                    item.status,
+                  ) && (
+                    <p className="rounded-lg bg-amber-50 p-2 text-xs text-amber-800">
+                      Signer/chain confirmation in progress…
+                    </p>
+                  )}
+                  {item.direction === 'OUTBOUND' &&
+                    item.status === 'CONFIRMED' && (
+                      <>
+                        {refInput(item.id, 'MT5/broker reference')}
+                        <button
+                          disabled={busy}
+                          onClick={() =>
+                            void run(
+                              () =>
+                                advanceTreasuryTransfer({
+                                  data: {
+                                    transferId: item.id,
+                                    action: 'BROKER_CREDIT',
+                                    reference: refs[item.id],
+                                  },
+                                }),
+                              'Broker credit recorded.',
+                            )
+                          }
+                          className="action"
+                        >
+                          Confirm broker credit
+                        </button>
+                      </>
+                    )}
+                  {item.status === 'BROKER_CREDITED' && (
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        void run(
+                          () =>
+                            advanceTreasuryTransfer({
+                              data: {
+                                transferId: item.id,
+                                action: 'RECONCILE',
+                                reference: 'reconciled',
+                              },
+                            }),
+                          'Transfer reconciled.',
+                        )
+                      }
+                      className="action"
+                    >
+                      Reconcile
+                    </button>
+                  )}
+                </div>
+              </Row>
+            ))}
+          </Queue>
+        </details>
       </div>
     </main>
   )

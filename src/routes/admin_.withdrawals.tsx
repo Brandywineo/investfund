@@ -292,6 +292,49 @@ function AdminWithdrawalsPage() {
                   </div>
                 </div>
 
+                {(source || item.txHash) && item.status !== 'REQUESTED' && (
+                  <div className="mt-4 rounded-2xl border border-black/8 bg-white p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-[#6e857a]">
+                      Settlement evidence
+                    </p>
+                    {source && (
+                      <div className="mt-3">
+                        <p className="text-sm font-semibold">
+                          Source · {source.walletSetName}
+                        </p>
+                        <p className="mt-1 break-all font-mono text-xs text-[#6e857a]">
+                          {source.address}
+                        </p>
+                      </div>
+                    )}
+                    {item.txHash && (
+                      <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <p className="min-w-0 flex-1 break-all font-mono text-xs">
+                          TXID · {item.txHash}
+                        </p>
+                        <CopyButton value={item.txHash} label="Copy TXID" />
+                      </div>
+                    )}
+                    <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-[#6e857a]">
+                      {item.reviewedAt && (
+                        <span>
+                          Reviewed {formatKenyaDateTime(item.reviewedAt)} EAT
+                        </span>
+                      )}
+                      {item.broadcastAt && (
+                        <span>
+                          Broadcast {formatKenyaDateTime(item.broadcastAt)} EAT
+                        </span>
+                      )}
+                      {item.confirmedAt && (
+                        <span>
+                          Confirmed {formatKenyaDateTime(item.confirmedAt)} EAT
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {item.status === 'REQUESTED' && (
                   <div className="mt-5 rounded-2xl border border-black/8 p-4">
                     <label className="text-sm font-semibold">
@@ -451,14 +494,9 @@ function AdminWithdrawalsPage() {
                 )}
                 {item.status === 'BROADCAST' && (
                   <div className="mt-5 rounded-2xl bg-violet-50 p-4 text-sm text-violet-800">
-                    <p className="break-all">
-                      Broadcast: {item.txHash || 'transaction hash pending'}
+                    <p>
+                      Transaction broadcast. Waiting for chain confirmation.
                     </p>
-                    {item.txHash && (
-                      <div className="mt-2">
-                        <CopyButton value={item.txHash} label="Copy TXID" />
-                      </div>
-                    )}
                     <button
                       disabled={busy === item.id}
                       onClick={() =>
