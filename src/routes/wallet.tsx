@@ -22,6 +22,71 @@ export const Route = createFileRoute('/wallet')({
   component: WalletPage,
 })
 
+const withdrawalLabels: Record<string, string> = {
+  REQUESTED: 'Under review',
+  APPROVED: 'Approved',
+  PROCESSING: 'Preparing transfer',
+  BROADCAST: 'Sent',
+  CONFIRMED: 'Confirmed',
+  FAILED: 'Failed',
+  REJECTED: 'Rejected',
+  CANCELLED: 'Cancelled',
+}
+
+const depositLabels: Record<string, string> = {
+  PENDING: 'Confirming',
+  CONFIRMED: 'Credited',
+  IGNORED_DUST: 'Below deposit minimum',
+  REJECTED: 'Not credited',
+}
+
+function activityDate(value: Date | string | null | undefined) {
+  if (!value) return null
+  return new Intl.DateTimeFormat('en-KE', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'Africa/Nairobi',
+  }).format(new Date(value))
+}
+
+function statusTone(status: string) {
+  if (status === 'CONFIRMED') return 'bg-green-100 text-green-800'
+  if (['FAILED', 'REJECTED', 'CANCELLED'].includes(status))
+    return 'bg-red-100 text-red-800'
+  return 'bg-amber-100 text-amber-800'
+}
+
+function WithdrawalProgress({ status }: { status: string }) {
+  if (['FAILED', 'REJECTED', 'CANCELLED'].includes(status)) return null
+  const current =
+    status === 'CONFIRMED'
+      ? 3
+      : status === 'BROADCAST' || status === 'PROCESSING'
+        ? 2
+        : status === 'APPROVED'
+          ? 1
+          : 0
+  return (
+    <div
+      className="mt-4 grid grid-cols-4 gap-1"
+      aria-label="Withdrawal progress"
+    >
+      {['Requested', 'Approved', 'Sending', 'Confirmed'].map((label, index) => (
+        <div key={label} className="min-w-0">
+          <div
+            className={`h-1.5 rounded-full ${index <= current ? 'bg-[#85ae38]' : 'bg-black/10'}`}
+          />
+          <p
+            className={`mt-1 truncate text-[9px] font-bold uppercase tracking-[.04em] ${index <= current ? 'text-[#36520f]' : 'text-[#91a098]'}`}
+          >
+            {label}
+          </p>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function WalletPage() {
   const data = Route.useLoaderData()
   const router = useRouter()
@@ -233,19 +298,45 @@ function WalletPage() {
                       key={item.id}
                       className="rounded-2xl bg-[#f4f6f2] p-4"
                     >
-                      <div className="flex justify-between gap-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
                         <b>{Number(item.amount).toFixed(2)} USDT</b>
-                        <span className="text-xs font-bold">{item.status}</span>
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[.06em] ${statusTone(item.status)}`}
+                        >
+                          {depositLabels[item.status] ?? item.status}
+                        </span>
                       </div>
-                      <p className="mt-2 truncate text-xs text-[#6e857a]">
-                        {item.txHash}
+                      <p className="mt-2 text-xs text-[#6e857a]">
+                        {item.network} ·{' '}
+                        {activityDate(item.confirmedAt ?? item.submittedAt)}
                       </p>
+                      {item.txHash && (
+                        <div className="mt-3 rounded-xl bg-white/70 p-3">
+                          <p className="break-all font-mono text-[10px] leading-relaxed text-[#6e857a]">
+                            {item.txHash}
+                          </p>
+                          <a
+                            href={`https://bscscan.com/tx/${item.txHash}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-2 inline-block text-xs font-bold text-[#527c16]"
+                          >
+                            View on BscScan ↗
+                          </a>
+                        </div>
+                      )}
+                      {item.rejectionReason && (
+                        <p className="mt-3 rounded-xl bg-red-50 p-3 text-xs text-red-700">
+                          {item.rejectionReason}
+                        </p>
+                      )}
                     </article>
                   ))
                 ) : (
-                  <p className="text-sm text-[#6e857a]">
-                    No deposits submitted.
-                  </p>
+                  <div className="rounded-2xl border border-dashed border-black/10 p-5 text-sm text-[#6e857a]">
+                    Confirmed deposits will appear here with their transaction
+                    details.
+                  </div>
                 )}
               </div>
             </div>
@@ -258,17 +349,78 @@ function WalletPage() {
                       key={item.id}
                       className="rounded-2xl bg-[#f4f6f2] p-4"
                     >
-                      <div className="flex justify-between gap-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
                         <b>{Number(item.amount).toFixed(2)} USDT</b>
-                        <span className="text-xs font-bold">{item.status}</span>
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[.06em] ${statusTone(item.status)}`}
+                        >
+                          {withdrawalLabels[item.status] ?? item.status}
+                        </span>
                       </div>
-                      <p className="mt-2 break-all font-mono text-xs text-[#6e857a]">
-                        {item.destinationAddress}
-                      </p>
-                      <p className="mt-2 text-xs text-[#6e857a]">
-                        Fee {Number(item.feeAmount).toFixed(2)} · sends{' '}
-                        {Number(item.netAmount).toFixed(2)} USDT
-                      </p>
+                      <WithdrawalProgress status={item.status} />
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                        <div className="rounded-xl bg-white/70 p-3">
+                          <span className="text-[#6e857a]">Platform fee</span>
+                          <b className="mt-1 block">
+                            {Number(item.feeAmount).toFixed(2)} USDT
+                          </b>
+                        </div>
+                        <div className="rounded-xl bg-white/70 p-3">
+                          <span className="text-[#6e857a]">You receive</span>
+                          <b className="mt-1 block">
+                            {Number(item.netAmount).toFixed(2)} USDT
+                          </b>
+                        </div>
+                      </div>
+                      <div className="mt-3 rounded-xl bg-white/70 p-3">
+                        <p className="text-[10px] font-bold uppercase tracking-[.06em] text-[#6e857a]">
+                          Destination · {item.network}
+                        </p>
+                        <p className="mt-1 break-all font-mono text-[10px] leading-relaxed">
+                          {item.destinationAddress}
+                        </p>
+                      </div>
+                      <div className="mt-3 space-y-1 text-xs text-[#6e857a]">
+                        <p>Requested: {activityDate(item.createdAt)}</p>
+                        {item.reviewedAt && (
+                          <p>Reviewed: {activityDate(item.reviewedAt)}</p>
+                        )}
+                        {item.broadcastAt && (
+                          <p>Sent: {activityDate(item.broadcastAt)}</p>
+                        )}
+                        {item.confirmedAt && (
+                          <p>Confirmed: {activityDate(item.confirmedAt)}</p>
+                        )}
+                      </div>
+                      {item.txHash && (
+                        <div className="mt-3 rounded-xl bg-white/70 p-3">
+                          <p className="break-all font-mono text-[10px] leading-relaxed text-[#6e857a]">
+                            {item.txHash}
+                          </p>
+                          <a
+                            href={`https://bscscan.com/tx/${item.txHash}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-2 inline-block text-xs font-bold text-[#527c16]"
+                          >
+                            View on BscScan ↗
+                          </a>
+                        </div>
+                      )}
+                      {['FAILED', 'REJECTED', 'CANCELLED'].includes(
+                        item.status,
+                      ) && (
+                        <div className="mt-3 rounded-xl bg-red-50 p-3 text-xs text-red-700">
+                          <b className="block">Administrator response</b>
+                          {item.rejectionReason && (
+                            <p className="mt-1">{item.rejectionReason}</p>
+                          )}
+                          <p className="mt-2 font-semibold">
+                            The reserved amount has been returned to your
+                            available balance.
+                          </p>
+                        </div>
+                      )}
                       {item.status === 'REQUESTED' && (
                         <button
                           disabled={busy}
@@ -289,9 +441,10 @@ function WalletPage() {
                     </article>
                   ))
                 ) : (
-                  <p className="text-sm text-[#6e857a]">
-                    No withdrawals requested.
-                  </p>
+                  <div className="rounded-2xl border border-dashed border-black/10 p-5 text-sm text-[#6e857a]">
+                    You have no withdrawal requests yet. A submitted request
+                    will show its review and on-chain progress here.
+                  </div>
                 )}
               </div>
             </div>
