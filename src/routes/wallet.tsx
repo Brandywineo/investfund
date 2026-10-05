@@ -96,6 +96,9 @@ function WalletPage() {
   const [destinationAddress, setDestinationAddress] = useState('')
   const [withdrawalAmount, setWithdrawalAmount] = useState('')
   const availableBalance = Number(data.balances.available)
+  const minimumWithdrawal = Number(data.settings.minimumWithdrawalAmount)
+  const canWithdraw = availableBalance >= minimumWithdrawal
+  const withdrawalShortfall = Math.max(0, minimumWithdrawal - availableBalance)
   const requestedAmount = Number(withdrawalAmount)
   const amountExceedsAvailable =
     Number.isFinite(requestedAmount) && requestedAmount > availableBalance
@@ -205,8 +208,9 @@ function WalletPage() {
                 Amount
                 <button
                   type="button"
+                  disabled={!canWithdraw}
                   onClick={() => setWithdrawalAmount(data.balances.available)}
-                  className="text-xs font-bold text-[#527c16]"
+                  className="text-xs font-bold text-[#527c16] disabled:opacity-40"
                 >
                   Use max
                 </button>
@@ -220,6 +224,7 @@ function WalletPage() {
                 max={availableBalance}
                 step="0.00000001"
                 required
+                disabled={!canWithdraw}
                 className={input}
               />
             </label>
@@ -236,15 +241,16 @@ function WalletPage() {
                 value={destinationAddress}
                 onChange={(event) => setDestinationAddress(event.target.value)}
                 required
+                disabled={!canWithdraw}
                 className={`${input} pr-24 font-mono text-sm`}
               />
               <PasteButton onPaste={setDestinationAddress} />
             </label>
             <button
-              disabled={busy || amountExceedsAvailable}
+              disabled={busy || amountExceedsAvailable || !canWithdraw}
               className="mt-6 w-full rounded-2xl bg-[#123d2d] px-5 py-3 font-bold text-white disabled:opacity-50"
             >
-              Request withdrawal
+              {canWithdraw ? 'Request withdrawal' : 'Withdrawal unavailable'}
             </button>
             {Number(withdrawalAmount) > 0 && (
               <div className="mt-4 rounded-xl bg-[#f4f6f2] p-4 text-sm">
@@ -279,10 +285,12 @@ function WalletPage() {
                 </div>
               </div>
             )}
-            <p className="mt-4 text-xs text-[#6e857a]">
-              Minimum {Number(data.settings.minimumWithdrawalAmount).toFixed(2)}{' '}
-              USDT. Funds are locked immediately, then sent automatically after
-              administrator approval.
+            <p
+              className={`mt-4 text-xs ${canWithdraw ? 'text-[#6e857a]' : 'font-semibold text-amber-700'}`}
+            >
+              {canWithdraw
+                ? `Minimum ${minimumWithdrawal.toFixed(2)} USDT. Funds are locked immediately, then sent automatically after administrator approval.`
+                : `You need ${withdrawalShortfall.toFixed(2)} USDT more to request a withdrawal.`}
             </p>
           </form>
         </div>
@@ -374,8 +382,12 @@ function WalletPage() {
                         <div className="min-w-0">
                           <b>{Number(item.amount).toFixed(2)} USDT</b>
                           <p className="mt-1 text-xs text-[#6e857a]">
-                            {activityDate(item.createdAt)} · receives{' '}
-                            {Number(item.netAmount).toFixed(2)} USDT
+                            {activityDate(item.createdAt)} ·{' '}
+                            {['FAILED', 'REJECTED', 'CANCELLED'].includes(
+                              item.status,
+                            )
+                              ? `${Number(item.amount).toFixed(2)} USDT returned`
+                              : `receives ${Number(item.netAmount).toFixed(2)} USDT`}
                           </p>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
@@ -399,9 +411,22 @@ function WalletPage() {
                             </b>
                           </div>
                           <div className="rounded-xl bg-white/70 p-3">
-                            <span className="text-[#6e857a]">You receive</span>
+                            <span className="text-[#6e857a]">
+                              {['FAILED', 'REJECTED', 'CANCELLED'].includes(
+                                item.status,
+                              )
+                                ? 'Returned to balance'
+                                : 'You receive'}
+                            </span>
                             <b className="mt-1 block">
-                              {Number(item.netAmount).toFixed(2)} USDT
+                              {Number(
+                                ['FAILED', 'REJECTED', 'CANCELLED'].includes(
+                                  item.status,
+                                )
+                                  ? item.amount
+                                  : item.netAmount,
+                              ).toFixed(2)}{' '}
+                              USDT
                             </b>
                           </div>
                         </div>

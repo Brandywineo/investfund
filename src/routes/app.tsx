@@ -33,15 +33,31 @@ function Home() {
   const greeting =
     hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'
   const rate = Number(portfolio.dailyRatePercent).toFixed(2)
-  const activity = portfolio.latestActivatedAt
-    ? [
-        [
-          'Investment activated',
-          `${portfolio.activePrincipal} USDT`,
-          new Date(portfolio.latestActivatedAt).toISOString().slice(0, 10),
-        ],
-      ]
-    : [['No transactions yet', '—', 'Fund your wallet to begin']]
+  const lifetimeEarnings = (
+    Number(portfolio.earnedProfit) + Number(portfolio.referralIncome)
+  ).toFixed(2)
+  const activeProfit = Math.max(
+    0,
+    Number(portfolio.activeInvestmentBalance) -
+      Number(portfolio.activePrincipal),
+  ).toFixed(2)
+  const activityLabels: Record<string, string> = {
+    DAILY_ACCRUAL: 'Daily profit credited',
+    DEPOSIT_CONFIRMED: 'Deposit confirmed',
+    INVESTMENT_ACTIVATED: 'Investment started',
+    INVESTMENT_FUNDS_ADDED: 'Funds added to investment',
+    INVESTMENT_PROFIT_RELEASED: 'Profit released',
+    INVESTMENT_EXIT_APPROVED: 'Investment stopped',
+    REFERRAL_COMMISSION_POSTED: 'Referral reward credited',
+    WITHDRAWAL_RESERVED: 'Withdrawal requested',
+    WITHDRAWAL_RESERVATION_RELEASED: 'Withdrawal funds returned',
+  }
+  const activity = portfolio.recentActivity.map((item) => ({
+    ...item,
+    title:
+      activityLabels[item.eventType] ??
+      item.eventType.replaceAll('_', ' ').toLowerCase(),
+  }))
 
   return (
     <main className="min-h-screen bg-[#f4f6f2] text-[#10251c]">
@@ -64,16 +80,42 @@ function Home() {
             <Link to="/community">Community</Link>
             <Link to="/ledger">Ledger</Link>
             <Link to="/account">Account</Link>
-            <Link to="/notifications">Notifications</Link>
             {user.role === 'ADMIN' ? <Link to="/admin">Admin</Link> : null}
           </div>
-          <Link
-            to="/account"
-            className="rounded-full bg-white px-4 py-2 text-sm font-semibold shadow-sm ring-1 ring-black/8"
-            title="Account"
-          >
-            {user.displayName.slice(0, 2).toUpperCase()}
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link
+              to="/notifications"
+              className="relative grid size-10 place-items-center rounded-full bg-white text-[#123d2d] shadow-sm ring-1 ring-black/8"
+              title="Notifications"
+              aria-label={`${portfolio.unreadNotifications} unread notifications`}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="size-5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                aria-hidden="true"
+              >
+                <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+                <path d="M10 21h4" />
+              </svg>
+              {portfolio.unreadNotifications > 0 && (
+                <span className="absolute -right-1 -top-1 grid min-h-5 min-w-5 place-items-center rounded-full bg-[#85ae38] px-1 text-[9px] font-black text-white ring-2 ring-[#f4f6f2]">
+                  {portfolio.unreadNotifications > 9
+                    ? '9+'
+                    : portfolio.unreadNotifications}
+                </span>
+              )}
+            </Link>
+            <Link
+              to="/account"
+              className="grid size-10 place-items-center rounded-full bg-white text-sm font-semibold shadow-sm ring-1 ring-black/8"
+              title="Account"
+            >
+              {user.displayName.slice(0, 2).toUpperCase()}
+            </Link>
+          </div>
         </div>
       </nav>
 
@@ -117,13 +159,15 @@ function Home() {
               to="/invest"
               className="w-fit rounded-full bg-[#d9ff71] px-6 py-3 text-sm font-bold text-[#123d2d] shadow-[0_8px_30px_rgba(133,176,31,.2)]"
             >
-              Start investing
+              {Number(portfolio.activePrincipal) > 0
+                ? 'Manage investment'
+                : 'Start investing'}
             </Link>
           </div>
         </div>
 
         <div className="grid gap-5 lg:grid-cols-[1.35fr_.65fr]">
-          <article className="overflow-hidden rounded-[2rem] bg-[#123d2d] p-7 text-white shadow-[0_24px_70px_rgba(18,61,45,.18)] md:p-10">
+          <article className="overflow-hidden rounded-[2rem] bg-[#123d2d] p-7 text-white shadow-[0_24px_70px_rgba(18,61,45,.18)] md:p-9">
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-sm text-white/60">Total portfolio</p>
@@ -135,11 +179,8 @@ function Home() {
                 {rate}% daily rate
               </span>
             </div>
-            <div className="mt-12 border-t border-white/12 pt-6">
-              <p className="text-[10px] font-bold uppercase tracking-[.14em] text-white/45">
-                Current account value
-              </p>
-              <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-3">
+            <div className="mt-9 border-t border-white/12 pt-5">
+              <div className="grid gap-3 sm:grid-cols-3">
                 {[
                   ['Available to withdraw', `$${portfolio.available}`],
                   [
@@ -155,26 +196,29 @@ function Home() {
                 ))}
               </div>
             </div>
-            <div className="mt-6 rounded-2xl bg-white/7 p-4">
-              <p className="text-[10px] font-bold uppercase tracking-[.14em] text-white/45">
-                Lifetime earnings
-              </p>
-              <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-3">
-                {[
-                  ['Investment profit', `$${portfolio.earnedProfit}`],
-                  ['Referral income', `$${portfolio.referralIncome}`],
-                  ['Active principal', `$${portfolio.activePrincipal}`],
-                ].map(([label, value]) => (
-                  <div key={label}>
-                    <p className="text-xs text-white/50">{label}</p>
-                    <p className="mt-1 font-semibold">{value}</p>
-                  </div>
-                ))}
+            <div className="mt-5 flex flex-col gap-4 rounded-2xl bg-white/7 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[.14em] text-white/45">
+                  Total earned
+                </p>
+                <p className="mt-1 text-2xl font-semibold">
+                  ${lifetimeEarnings}
+                </p>
               </div>
-              <p className="mt-3 text-[10px] leading-4 text-white/40">
-                Earnings are shown for transparency and are already reflected in
-                your available or investment balances.
-              </p>
+              <div className="grid grid-cols-2 gap-6 text-sm">
+                <div>
+                  <p className="text-xs text-white/50">Investment profit</p>
+                  <p className="mt-1 font-semibold">
+                    ${portfolio.earnedProfit}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-white/50">Referral rewards</p>
+                  <p className="mt-1 font-semibold">
+                    ${portfolio.referralIncome}
+                  </p>
+                </div>
+              </div>
             </div>
           </article>
 
@@ -182,26 +226,31 @@ function Home() {
             <p className="text-sm font-semibold text-[#557065]">
               Current investment
             </p>
-            <div className="mt-8 flex items-end justify-between">
+            <div className="mt-7 flex items-end justify-between">
               <div>
                 <p className="text-3xl font-semibold">
                   ${portfolio.activeInvestmentBalance}
                 </p>
-                <p className="mt-1 text-sm text-[#557065]">
-                  Compounding balance
-                </p>
+                <p className="mt-1 text-sm text-[#557065]">Current value</p>
               </div>
               <div className="grid size-16 place-items-center rounded-full bg-white text-sm font-bold shadow-sm">
                 {rate}%
               </div>
             </div>
-            <div className="mt-8 h-2 overflow-hidden rounded-full bg-black/8">
-              <div className="h-full w-2/3 rounded-full bg-[#85ae38]" />
+            <div className="mt-7 grid grid-cols-2 gap-3">
+              <div className="rounded-2xl bg-white/55 p-4">
+                <p className="text-xs text-[#557065]">Principal</p>
+                <p className="mt-1 font-semibold">
+                  ${portfolio.activePrincipal}
+                </p>
+              </div>
+              <div className="rounded-2xl bg-white/55 p-4">
+                <p className="text-xs text-[#557065]">Current profit</p>
+                <p className="mt-1 font-semibold text-green-700">
+                  +${activeProfit}
+                </p>
+              </div>
             </div>
-            <p className="mt-4 text-xs leading-5 text-[#557065]">
-              Rate changes apply forward only. Every daily posting remains
-              visible in your ledger.
-            </p>
           </article>
         </div>
 
@@ -321,18 +370,37 @@ function Home() {
               </Link>
             </div>
             <div className="mt-5 divide-y divide-black/6">
-              {activity.map(([title, amount, time]) => (
-                <div
-                  className="flex items-center justify-between py-4"
-                  key={title}
-                >
-                  <div>
-                    <p className="text-sm font-semibold">{title}</p>
-                    <p className="mt-1 text-xs text-[#83958d]">{time}</p>
+              {activity.length ? (
+                activity.map((item) => (
+                  <div
+                    className="flex items-center justify-between gap-4 py-4"
+                    key={item.id}
+                  >
+                    <div>
+                      <p className="text-sm font-semibold capitalize">
+                        {item.title}
+                      </p>
+                      <p className="mt-1 text-xs text-[#83958d]">
+                        {new Intl.DateTimeFormat('en-KE', {
+                          dateStyle: 'medium',
+                          timeStyle: 'short',
+                          timeZone: 'Africa/Nairobi',
+                        }).format(new Date(item.effectiveAt))}
+                      </p>
+                    </div>
+                    <p
+                      className={`shrink-0 text-sm font-bold ${item.direction === 'IN' ? 'text-green-700' : 'text-[#10251c]'}`}
+                    >
+                      {item.direction === 'IN' ? '+' : '−'}
+                      {item.amount} USDT
+                    </p>
                   </div>
-                  <p className="text-sm font-bold">{amount}</p>
-                </div>
-              ))}
+                ))
+              ) : (
+                <p className="py-6 text-sm text-[#6e857a]">
+                  Your latest financial activity will appear here.
+                </p>
+              )}
             </div>
           </article>
         </div>

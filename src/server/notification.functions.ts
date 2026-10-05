@@ -131,3 +131,20 @@ export const markNotificationsRead = createServerFn({ method: 'POST' }).handler(
     return { success: true }
   },
 )
+
+export const markNotificationRead = createServerFn({ method: 'POST' })
+  .validator(z.object({ notificationId: z.string().uuid() }))
+  .handler(async ({ data }) => {
+    const user = await requireUser()
+    await getDb()
+      .update(notifications)
+      .set({ readAt: new Date() })
+      .where(
+        and(
+          eq(notifications.id, data.notificationId),
+          eq(notifications.userId, user.id),
+          isNull(notifications.readAt),
+        ),
+      )
+    return { success: true }
+  })

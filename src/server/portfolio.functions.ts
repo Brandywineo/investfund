@@ -8,7 +8,9 @@ import {
   investments,
   ledgerAccounts,
   ledgerEntries,
+  ledgerTransactions,
   mt5Positions,
+  notifications,
   platformSettings,
   referralCommissions,
   referralRelationships,
@@ -52,6 +54,8 @@ export const getPortfolio = createServerFn({ method: 'GET' }).handler(
       earnedProfit,
       referralIncome,
       pendingWithdrawal,
+      unreadNotifications,
+      recentActivityRows,
     ] = await Promise.all([
       db
         .select({
@@ -145,6 +149,34 @@ export const getPortfolio = createServerFn({ method: 'GET' }).handler(
           ),
         )
         .then((rows) => rows.at(0)),
+      db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(notifications)
+        .where(
+          and(eq(notifications.userId, user.id), isNull(notifications.readAt)),
+        )
+        .then((rows) => rows.at(0)?.count ?? 0),
+      db
+        .select({
+          transactionId: ledgerTransactions.id,
+          eventType: ledgerTransactions.eventType,
+          effectiveAt: ledgerTransactions.effectiveAt,
+          accountCode: ledgerAccounts.code,
+          debit: ledgerEntries.debit,
+          credit: ledgerEntries.credit,
+        })
+        .from(ledgerEntries)
+        .innerJoin(
+          ledgerTransactions,
+          eq(ledgerTransactions.id, ledgerEntries.transactionId),
+        )
+        .innerJoin(
+          ledgerAccounts,
+          eq(ledgerAccounts.id, ledgerEntries.accountId),
+        )
+        .where(eq(ledgerAccounts.ownerUserId, user.id))
+        .orderBy(desc(ledgerTransactions.effectiveAt))
+        .limit(12),
     ])
     const canViewLivePositions =
       user.role === 'ADMIN' || Boolean(latestInvestment)
@@ -155,6 +187,23 @@ export const getPortfolio = createServerFn({ method: 'GET' }).handler(
     const latestPosition = canViewLivePositions
       ? (visibleOpenPositions.at(0) ?? null)
       : null
+    const recentActivity = Array.from(
+      recentActivityRows
+        .reduce((items, row) => {
+          const item = items.get(row.transactionId) ?? {
+            id: row.transactionId,
+            eventType: row.eventType,
+            effectiveAt: row.effectiveAt.toISOString(),
+            amount: '0',
+          }
+          const movement = money(row.credit).minus(row.debit)
+          if (movement.abs().greaterThan(money(item.amount).abs()))
+            item.amount = movement.toString()
+          items.set(row.transactionId, item)
+          return items
+        }, new Map<string, { id: string; eventType: string; effectiveAt: string; amount: string }>())
+        .values(),
+    ).slice(0, 3)
     return {
       user,
       available: formatUsdt(available),
@@ -164,6 +213,12 @@ export const getPortfolio = createServerFn({ method: 'GET' }).handler(
       earnedProfit: formatUsdt(earnedProfit?.amount ?? 0),
       referralIncome: formatUsdt(referralIncome?.amount ?? 0),
       pendingWithdrawal: formatUsdt(pendingWithdrawal?.amount ?? 0),
+      unreadNotifications,
+      recentActivity: recentActivity.map((item) => ({
+        ...item,
+        amount: formatUsdt(money(item.amount).abs()),
+        direction: money(item.amount).isNegative() ? 'OUT' : 'IN',
+      })),
       totalPortfolio: formatUsdt(
         money(available)
           .add(investmentSummary?.balance ?? 0)
