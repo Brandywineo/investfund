@@ -478,7 +478,7 @@ export async function queueWithdrawalRequestedAdminAlerts(
       category: 'WITHDRAWAL',
       title: 'Withdrawal approval requested',
       body: `${withdrawal.userName} requested ${Number(withdrawal.amount).toFixed(2)} USDT to ${withdrawal.destinationAddress}.`,
-      href: '/admin/custody',
+      href: '/admin/withdrawals',
       eventKey: `admin-withdrawal-requested:${withdrawal.id}`,
     })
   }

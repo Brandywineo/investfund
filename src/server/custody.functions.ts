@@ -469,6 +469,130 @@ export const getCustodyDashboard = createServerFn({ method: 'GET' }).handler(
   },
 )
 
+export const getAdminWithdrawals = createServerFn({ method: 'GET' }).handler(
+  async () => {
+    await requireAdmin()
+    const db = getDb()
+    const [withdrawalRows, sourceWallets, userBalanceRows] = await Promise.all([
+      db
+        .select({
+          id: withdrawals.id,
+          userId: withdrawals.userId,
+          userName: users.displayName,
+          userEmail: users.email,
+          amount: withdrawals.amount,
+          feeAmount: withdrawals.feeAmount,
+          netAmount: withdrawals.netAmount,
+          feePercent: withdrawals.feePercent,
+          destinationAddress: withdrawals.destinationAddress,
+          network: withdrawals.network,
+          sourcePlatformWalletId: withdrawals.sourcePlatformWalletId,
+          txHash: withdrawals.txHash,
+          status: withdrawals.status,
+          rejectionReason: withdrawals.rejectionReason,
+          createdAt: withdrawals.createdAt,
+          reviewedAt: withdrawals.reviewedAt,
+          broadcastAt: withdrawals.broadcastAt,
+          confirmedAt: withdrawals.confirmedAt,
+        })
+        .from(withdrawals)
+        .innerJoin(users, eq(users.id, withdrawals.userId))
+        .orderBy(desc(withdrawals.createdAt))
+        .limit(250),
+      db
+        .select({
+          id: platformWallets.id,
+          address: platformWallets.address,
+          tokenBalance: platformWallets.tokenBalance,
+          nativeBalance: platformWallets.nativeBalance,
+          walletSetName: walletSets.name,
+          walletSetStatus: walletSets.status,
+        })
+        .from(platformWallets)
+        .innerJoin(walletSets, eq(walletSets.id, platformWallets.walletSetId))
+        .where(eq(platformWallets.role, 'HOT_WITHDRAWAL'))
+        .orderBy(asc(walletSets.createdAt)),
+      db
+        .select({
+          code: ledgerAccounts.code,
+          normal: ledgerAccounts.normalBalance,
+          debit: sql<string>`coalesce(sum(${ledgerEntries.debit}), 0)`,
+          credit: sql<string>`coalesce(sum(${ledgerEntries.credit}), 0)`,
+        })
+        .from(ledgerAccounts)
+        .leftJoin(ledgerEntries, eq(ledgerEntries.accountId, ledgerAccounts.id))
+        .where(
+          sql`${ledgerAccounts.code} like 'USER:%:AVAILABLE' or ${ledgerAccounts.code} like 'USER:%:INVESTED'`,
+        )
+        .groupBy(ledgerAccounts.code, ledgerAccounts.normalBalance),
+    ])
+
+    const userBalances = new Map<
+      string,
+      { available: string; invested: string }
+    >()
+    for (const row of userBalanceRows) {
+      const [, userId, balanceType] = row.code.split(':')
+      if (!userId || !balanceType) continue
+      const balance =
+        row.normal === 'DEBIT'
+          ? money(row.debit).minus(row.credit)
+          : money(row.credit).minus(row.debit)
+      const current = userBalances.get(userId) ?? {
+        available: '0',
+        invested: '0',
+      }
+      if (balanceType === 'AVAILABLE') current.available = formatUsdt(balance)
+      if (balanceType === 'INVESTED') current.invested = formatUsdt(balance)
+      userBalances.set(userId, current)
+    }
+
+    const requested = withdrawalRows.filter((row) => row.status === 'REQUESTED')
+    const pendingGross = requested.reduce(
+      (total, row) => total.add(row.amount),
+      money(0),
+    )
+    const pendingNet = requested.reduce(
+      (total, row) => total.add(row.netAmount),
+      money(0),
+    )
+    const pendingFees = requested.reduce(
+      (total, row) => total.add(row.feeAmount),
+      money(0),
+    )
+    const controlledLiquidity = sourceWallets.reduce(
+      (total, wallet) => total.add(wallet.tokenBalance),
+      money(0),
+    )
+
+    return {
+      summary: {
+        needsReview: requested.length,
+        inProgress: withdrawalRows.filter((row) =>
+          ['APPROVED', 'PROCESSING', 'BROADCAST'].includes(row.status),
+        ).length,
+        pendingGross: formatUsdt(pendingGross),
+        pendingNet: formatUsdt(pendingNet),
+        pendingFees: formatUsdt(pendingFees),
+        controlledLiquidity: formatUsdt(controlledLiquidity),
+        liquidityShortfall: formatUsdt(
+          pendingNet.greaterThan(controlledLiquidity)
+            ? pendingNet.minus(controlledLiquidity)
+            : 0,
+        ),
+      },
+      wallets: sourceWallets,
+      withdrawals: withdrawalRows.map((row) => ({
+        ...row,
+        userBalance: userBalances.get(row.userId) ?? {
+          available: '0.00',
+          invested: '0.00',
+        },
+      })),
+    }
+  },
+)
+
 export const recordAdminDeposit = createServerFn({ method: 'POST' })
   .validator(
     z.object({

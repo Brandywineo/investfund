@@ -37,6 +37,7 @@ import { Route as AdminUsersRouteImport } from './routes/admin_.users'
 import { Route as AdminWalletSetsRouteImport } from './routes/admin_.wallet-sets'
 import { Route as AdminWalletTransfersRouteImport } from './routes/admin_.wallet-transfers'
 import { Route as AdminWalletsRouteImport } from './routes/admin_.wallets'
+import { Route as AdminWithdrawalsRouteImport } from './routes/admin_.withdrawals'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -178,6 +179,11 @@ const AdminWalletsRoute = AdminWalletsRouteImport.update({
   path: '/admin/wallets',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminWithdrawalsRoute = AdminWithdrawalsRouteImport.update({
+  id: '/admin_/withdrawals',
+  path: '/admin/withdrawals',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -208,6 +214,7 @@ export interface FileRoutesByFullPath {
   '/admin/wallet-sets': typeof AdminWalletSetsRoute
   '/admin/wallet-transfers': typeof AdminWalletTransfersRoute
   '/admin/wallets': typeof AdminWalletsRoute
+  '/admin/withdrawals': typeof AdminWithdrawalsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -238,6 +245,7 @@ export interface FileRoutesByTo {
   '/admin/wallet-sets': typeof AdminWalletSetsRoute
   '/admin/wallet-transfers': typeof AdminWalletTransfersRoute
   '/admin/wallets': typeof AdminWalletsRoute
+  '/admin/withdrawals': typeof AdminWithdrawalsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -269,6 +277,7 @@ export interface FileRoutesById {
   '/admin_/wallet-sets': typeof AdminWalletSetsRoute
   '/admin_/wallet-transfers': typeof AdminWalletTransfersRoute
   '/admin_/wallets': typeof AdminWalletsRoute
+  '/admin_/withdrawals': typeof AdminWithdrawalsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -301,6 +310,7 @@ export interface FileRouteTypes {
     | '/admin/wallet-sets'
     | '/admin/wallet-transfers'
     | '/admin/wallets'
+    | '/admin/withdrawals'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -331,6 +341,7 @@ export interface FileRouteTypes {
     | '/admin/wallet-sets'
     | '/admin/wallet-transfers'
     | '/admin/wallets'
+    | '/admin/withdrawals'
   id:
     | '__root__'
     | '/'
@@ -361,6 +372,7 @@ export interface FileRouteTypes {
     | '/admin_/wallet-sets'
     | '/admin_/wallet-transfers'
     | '/admin_/wallets'
+    | '/admin_/withdrawals'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -392,6 +404,7 @@ export interface RootRouteChildren {
   AdminWalletSetsRoute: typeof AdminWalletSetsRoute
   AdminWalletTransfersRoute: typeof AdminWalletTransfersRoute
   AdminWalletsRoute: typeof AdminWalletsRoute
+  AdminWithdrawalsRoute: typeof AdminWithdrawalsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -592,6 +605,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminWalletsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin_/withdrawals': {
+      id: '/admin_/withdrawals'
+      path: '/admin/withdrawals'
+      fullPath: '/admin/withdrawals'
+      preLoaderRoute: typeof AdminWithdrawalsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -624,6 +644,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminWalletSetsRoute: AdminWalletSetsRoute,
   AdminWalletTransfersRoute: AdminWalletTransfersRoute,
   AdminWalletsRoute: AdminWalletsRoute,
+  AdminWithdrawalsRoute: AdminWithdrawalsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

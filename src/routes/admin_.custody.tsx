@@ -13,7 +13,6 @@ import {
   registerTreasuryReturn,
   recordAdminDeposit,
   reviewDeposit,
-  reviewWithdrawal,
   sweepWalletAddress,
   updateCustodySettings,
 } from '#/server/custody.functions'
@@ -39,9 +38,6 @@ function CustodyAdminPage() {
   const [busyAddressId, setBusyAddressId] = useState('')
   const [addressSort, setAddressSort] = useState('registered')
   const [refs, setRefs] = useState<Record<string, string>>({})
-  const [withdrawalSources, setWithdrawalSources] = useState<
-    Record<string, string>
-  >({})
   const [treasuryDestination, setTreasuryDestination] = useState('')
   async function run(action: () => Promise<unknown>, success: string) {
     setBusy(true)
@@ -208,6 +204,7 @@ function CustodyAdminPage() {
           </div>
           <nav className="flex gap-5 text-sm font-bold">
             <Link to="/admin">Controls</Link>
+            <Link to="/admin/withdrawals">Withdrawals</Link>
             <Link to="/admin/wallets">Platform wallets</Link>
             <Link to="/admin/wallet-transfers">Transfers</Link>
             <Link to="/admin/users">Users</Link>
@@ -235,6 +232,28 @@ function CustodyAdminPage() {
             </article>
           ))}
         </section>
+        <Link
+          to="/admin/withdrawals"
+          className="mt-5 flex flex-col justify-between gap-4 rounded-[2rem] bg-[#123d2d] p-6 text-white sm:flex-row sm:items-center"
+        >
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[.14em] text-[#d9ff71]">
+              Payment operations
+            </p>
+            <h2 className="mt-2 text-xl font-semibold">
+              {
+                data.withdrawals.filter((item) => item.status === 'REQUESTED')
+                  .length
+              }{' '}
+              withdrawals need review
+            </h2>
+            <p className="mt-1 text-sm text-white/65">
+              Review users, destinations, fees and controlled-wallet liquidity
+              on the dedicated queue.
+            </p>
+          </div>
+          <span className="font-bold text-[#d9ff71]">Open withdrawals →</span>
+        </Link>
         <div className="mt-5 grid gap-5 lg:grid-cols-2">
           <form
             onSubmit={settings}
@@ -590,151 +609,6 @@ function CustodyAdminPage() {
                   </button>
                 </div>
               )}
-            </Row>
-          ))}
-        </Queue>
-        <Queue title="Withdrawals">
-          {data.withdrawals.map((item) => (
-            <Row
-              key={item.id}
-              title={`${item.userEmail} · ${Number(item.amount).toFixed(2)} USDT requested · ${Number(item.netAmount).toFixed(2)} USDT sends`}
-              status={item.status}
-              detail={`${item.destinationAddress} · fee ${Number(item.feeAmount).toFixed(2)} USDT (${Number(item.feePercent).toFixed(2)}%)`}
-            >
-              <div className="grid min-w-52 gap-2">
-                <CopyButton value={item.destinationAddress} />
-                {item.status === 'REQUESTED' && (
-                  <div className="grid gap-2">
-                    <select
-                      aria-label="Withdrawal source wallet"
-                      value={withdrawalSources[item.id] || ''}
-                      onChange={(event) =>
-                        setWithdrawalSources((current) => ({
-                          ...current,
-                          [item.id]: event.target.value,
-                        }))
-                      }
-                      className="rounded-xl border border-black/10 bg-white px-3 py-2 text-xs"
-                    >
-                      <option value="">Select source hot wallet</option>
-                      {data.withdrawalSourceWallets.map((wallet) => (
-                        <option key={wallet.id} value={wallet.id}>
-                          {wallet.walletSetName} ·{' '}
-                          {Number(wallet.tokenBalance).toFixed(2)} USDT
-                        </option>
-                      ))}
-                    </select>
-                    <div className="flex gap-2">
-                      <button
-                        disabled={busy || !withdrawalSources[item.id]}
-                        onClick={() =>
-                          void run(
-                            () =>
-                              reviewWithdrawal({
-                                data: {
-                                  withdrawalId: item.id,
-                                  action: 'APPROVE',
-                                  sourcePlatformWalletId:
-                                    withdrawalSources[item.id],
-                                },
-                              }),
-                            'Withdrawal approved and funds reserved.',
-                          )
-                        }
-                        className="action"
-                      >
-                        Approve
-                      </button>
-                      <button
-                        disabled={busy}
-                        onClick={() =>
-                          void run(
-                            () =>
-                              reviewWithdrawal({
-                                data: {
-                                  withdrawalId: item.id,
-                                  action: 'REJECT',
-                                  reference: 'Rejected by administrator',
-                                },
-                              }),
-                            'Withdrawal rejected.',
-                          )
-                        }
-                        className="danger"
-                      >
-                        Reject
-                      </button>
-                    </div>
-                  </div>
-                )}
-                {item.status === 'APPROVED' && (
-                  <>
-                    <p className="text-xs text-[#6e857a]">
-                      Approved. The isolated signer will broadcast this payment
-                      on its next worker run.
-                    </p>
-                    <button
-                      disabled={busy}
-                      onClick={() =>
-                        void run(
-                          () =>
-                            reviewWithdrawal({
-                              data: {
-                                withdrawalId: item.id,
-                                action: 'FAIL_APPROVED',
-                                reference:
-                                  'Broadcast failed before funds were sent',
-                              },
-                            }),
-                          'Reservation released to the user.',
-                        )
-                      }
-                      className="danger"
-                    >
-                      Release failed payment
-                    </button>
-                  </>
-                )}
-                {item.status === 'BROADCAST' && (
-                  <button
-                    disabled={busy}
-                    onClick={() =>
-                      void run(
-                        () =>
-                          reviewWithdrawal({
-                            data: { withdrawalId: item.id, action: 'CONFIRM' },
-                          }),
-                        'Withdrawal confirmed.',
-                      )
-                    }
-                    className="action"
-                  >
-                    Confirm on-chain
-                  </button>
-                )}
-                {item.status === 'FAILED' && (
-                  <button
-                    disabled={busy}
-                    onClick={() =>
-                      void run(
-                        () =>
-                          reviewWithdrawal({
-                            data: {
-                              withdrawalId: item.id,
-                              action: 'RELEASE_FAILED',
-                              reference:
-                                'Administrator verified no transaction was broadcast',
-                            },
-                          }),
-                        'Failed withdrawal reservation released.',
-                      )
-                    }
-                    className="danger"
-                  >
-                    Release after chain check
-                  </button>
-                )}
-              </div>
             </Row>
           ))}
         </Queue>

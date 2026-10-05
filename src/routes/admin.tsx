@@ -117,6 +117,7 @@ function AdminPage() {
             <Link to="/admin/wallets">Platform wallets</Link>
             <Link to="/admin/wallet-sets">Wallet sets</Link>
             <Link to="/admin/custody">Custody</Link>
+            <Link to="/admin/withdrawals">Withdrawals</Link>
             <Link to="/admin/referrals">Referrals</Link>
             <Link to="/admin/trading">Trading positions</Link>
             <Link to="/admin/exits">Exit requests</Link>
