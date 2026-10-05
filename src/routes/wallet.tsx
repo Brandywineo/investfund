@@ -294,43 +294,58 @@ function WalletPage() {
               <div className="mt-3 space-y-3">
                 {data.deposits.length ? (
                   data.deposits.map((item) => (
-                    <article
+                    <details
                       key={item.id}
-                      className="rounded-2xl bg-[#f4f6f2] p-4"
+                      className="group rounded-2xl bg-[#f4f6f2] open:ring-1 open:ring-black/5"
                     >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <b>{Number(item.amount).toFixed(2)} USDT</b>
-                        <span
-                          className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[.06em] ${statusTone(item.status)}`}
-                        >
-                          {depositLabels[item.status] ?? item.status}
-                        </span>
-                      </div>
-                      <p className="mt-2 text-xs text-[#6e857a]">
-                        {item.network} ·{' '}
-                        {activityDate(item.confirmedAt ?? item.submittedAt)}
-                      </p>
-                      {item.txHash && (
-                        <div className="mt-3 rounded-xl bg-white/70 p-3">
-                          <p className="break-all font-mono text-[10px] leading-relaxed text-[#6e857a]">
-                            {item.txHash}
+                      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4 marker:hidden">
+                        <div className="min-w-0">
+                          <b>{Number(item.amount).toFixed(2)} USDT</b>
+                          <p className="mt-1 text-xs text-[#6e857a]">
+                            {activityDate(item.confirmedAt ?? item.submittedAt)}{' '}
+                            · {item.network}
                           </p>
-                          <a
-                            href={`https://bscscan.com/tx/${item.txHash}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="mt-2 inline-block text-xs font-bold text-[#527c16]"
-                          >
-                            View on BscScan ↗
-                          </a>
                         </div>
-                      )}
-                      {item.rejectionReason && (
-                        <p className="mt-3 rounded-xl bg-red-50 p-3 text-xs text-red-700">
-                          {item.rejectionReason}
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span
+                            className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[.06em] ${statusTone(item.status)}`}
+                          >
+                            {depositLabels[item.status] ?? item.status}
+                          </span>
+                          <span className="text-lg text-[#6e857a] transition-transform group-open:rotate-90">
+                            ›
+                          </span>
+                        </div>
+                      </summary>
+                      <div className="border-t border-black/6 px-4 pb-4 pt-3">
+                        <p className="text-xs text-[#6e857a]">
+                          {item.status === 'CONFIRMED'
+                            ? 'Credited'
+                            : 'Submitted'}{' '}
+                          {activityDate(item.confirmedAt ?? item.submittedAt)}
                         </p>
-                      )}
-                    </article>
+                        {item.txHash && (
+                          <div className="mt-3 rounded-xl bg-white/70 p-3">
+                            <p className="break-all font-mono text-[10px] leading-relaxed text-[#6e857a]">
+                              {item.txHash}
+                            </p>
+                            <a
+                              href={`https://bscscan.com/tx/${item.txHash}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-2 inline-block text-xs font-bold text-[#527c16]"
+                            >
+                              View on BscScan ↗
+                            </a>
+                          </div>
+                        )}
+                        {item.rejectionReason && (
+                          <p className="mt-3 rounded-xl bg-red-50 p-3 text-xs text-red-700">
+                            {item.rejectionReason}
+                          </p>
+                        )}
+                      </div>
+                    </details>
                   ))
                 ) : (
                   <div className="rounded-2xl border border-dashed border-black/10 p-5 text-sm text-[#6e857a]">
@@ -345,100 +360,119 @@ function WalletPage() {
               <div className="mt-3 space-y-3">
                 {data.withdrawals.length ? (
                   data.withdrawals.map((item) => (
-                    <article
+                    <details
                       key={item.id}
-                      className="rounded-2xl bg-[#f4f6f2] p-4"
+                      open={[
+                        'REQUESTED',
+                        'APPROVED',
+                        'PROCESSING',
+                        'BROADCAST',
+                      ].includes(item.status)}
+                      className="group rounded-2xl bg-[#f4f6f2] open:ring-1 open:ring-black/5"
                     >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <b>{Number(item.amount).toFixed(2)} USDT</b>
-                        <span
-                          className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[.06em] ${statusTone(item.status)}`}
-                        >
-                          {withdrawalLabels[item.status] ?? item.status}
-                        </span>
-                      </div>
-                      <WithdrawalProgress status={item.status} />
-                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                        <div className="rounded-xl bg-white/70 p-3">
-                          <span className="text-[#6e857a]">Platform fee</span>
-                          <b className="mt-1 block">
-                            {Number(item.feeAmount).toFixed(2)} USDT
-                          </b>
-                        </div>
-                        <div className="rounded-xl bg-white/70 p-3">
-                          <span className="text-[#6e857a]">You receive</span>
-                          <b className="mt-1 block">
+                      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4 marker:hidden">
+                        <div className="min-w-0">
+                          <b>{Number(item.amount).toFixed(2)} USDT</b>
+                          <p className="mt-1 text-xs text-[#6e857a]">
+                            {activityDate(item.createdAt)} · receives{' '}
                             {Number(item.netAmount).toFixed(2)} USDT
-                          </b>
-                        </div>
-                      </div>
-                      <div className="mt-3 rounded-xl bg-white/70 p-3">
-                        <p className="text-[10px] font-bold uppercase tracking-[.06em] text-[#6e857a]">
-                          Destination · {item.network}
-                        </p>
-                        <p className="mt-1 break-all font-mono text-[10px] leading-relaxed">
-                          {item.destinationAddress}
-                        </p>
-                      </div>
-                      <div className="mt-3 space-y-1 text-xs text-[#6e857a]">
-                        <p>Requested: {activityDate(item.createdAt)}</p>
-                        {item.reviewedAt && (
-                          <p>Reviewed: {activityDate(item.reviewedAt)}</p>
-                        )}
-                        {item.broadcastAt && (
-                          <p>Sent: {activityDate(item.broadcastAt)}</p>
-                        )}
-                        {item.confirmedAt && (
-                          <p>Confirmed: {activityDate(item.confirmedAt)}</p>
-                        )}
-                      </div>
-                      {item.txHash && (
-                        <div className="mt-3 rounded-xl bg-white/70 p-3">
-                          <p className="break-all font-mono text-[10px] leading-relaxed text-[#6e857a]">
-                            {item.txHash}
                           </p>
-                          <a
-                            href={`https://bscscan.com/tx/${item.txHash}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="mt-2 inline-block text-xs font-bold text-[#527c16]"
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span
+                            className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[.06em] ${statusTone(item.status)}`}
                           >
-                            View on BscScan ↗
-                          </a>
+                            {withdrawalLabels[item.status] ?? item.status}
+                          </span>
+                          <span className="text-lg text-[#6e857a] transition-transform group-open:rotate-90">
+                            ›
+                          </span>
                         </div>
-                      )}
-                      {['FAILED', 'REJECTED', 'CANCELLED'].includes(
-                        item.status,
-                      ) && (
-                        <div className="mt-3 rounded-xl bg-red-50 p-3 text-xs text-red-700">
-                          <b className="block">Administrator response</b>
-                          {item.rejectionReason && (
-                            <p className="mt-1">{item.rejectionReason}</p>
-                          )}
-                          <p className="mt-2 font-semibold">
-                            The reserved amount has been returned to your
-                            available balance.
+                      </summary>
+                      <div className="border-t border-black/6 px-4 pb-4 pt-3">
+                        <WithdrawalProgress status={item.status} />
+                        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                          <div className="rounded-xl bg-white/70 p-3">
+                            <span className="text-[#6e857a]">Platform fee</span>
+                            <b className="mt-1 block">
+                              {Number(item.feeAmount).toFixed(2)} USDT
+                            </b>
+                          </div>
+                          <div className="rounded-xl bg-white/70 p-3">
+                            <span className="text-[#6e857a]">You receive</span>
+                            <b className="mt-1 block">
+                              {Number(item.netAmount).toFixed(2)} USDT
+                            </b>
+                          </div>
+                        </div>
+                        <div className="mt-3 rounded-xl bg-white/70 p-3">
+                          <p className="text-[10px] font-bold uppercase tracking-[.06em] text-[#6e857a]">
+                            Destination · {item.network}
+                          </p>
+                          <p className="mt-1 break-all font-mono text-[10px] leading-relaxed">
+                            {item.destinationAddress}
                           </p>
                         </div>
-                      )}
-                      {item.status === 'REQUESTED' && (
-                        <button
-                          disabled={busy}
-                          onClick={() =>
-                            void run(
-                              () =>
-                                cancelWithdrawal({
-                                  data: { withdrawalId: item.id },
-                                }),
-                              'Withdrawal cancelled.',
-                            )
-                          }
-                          className="mt-3 text-xs font-bold text-red-700"
-                        >
-                          Cancel request
-                        </button>
-                      )}
-                    </article>
+                        <div className="mt-3 space-y-1 text-xs text-[#6e857a]">
+                          <p>Requested: {activityDate(item.createdAt)}</p>
+                          {item.reviewedAt && (
+                            <p>Reviewed: {activityDate(item.reviewedAt)}</p>
+                          )}
+                          {item.broadcastAt && (
+                            <p>Sent: {activityDate(item.broadcastAt)}</p>
+                          )}
+                          {item.confirmedAt && (
+                            <p>Confirmed: {activityDate(item.confirmedAt)}</p>
+                          )}
+                        </div>
+                        {item.txHash && (
+                          <div className="mt-3 rounded-xl bg-white/70 p-3">
+                            <p className="break-all font-mono text-[10px] leading-relaxed text-[#6e857a]">
+                              {item.txHash}
+                            </p>
+                            <a
+                              href={`https://bscscan.com/tx/${item.txHash}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-2 inline-block text-xs font-bold text-[#527c16]"
+                            >
+                              View on BscScan ↗
+                            </a>
+                          </div>
+                        )}
+                        {['FAILED', 'REJECTED', 'CANCELLED'].includes(
+                          item.status,
+                        ) && (
+                          <div className="mt-3 rounded-xl bg-red-50 p-3 text-xs text-red-700">
+                            <b className="block">Administrator response</b>
+                            {item.rejectionReason && (
+                              <p className="mt-1">{item.rejectionReason}</p>
+                            )}
+                            <p className="mt-2 font-semibold">
+                              The reserved amount has been returned to your
+                              available balance.
+                            </p>
+                          </div>
+                        )}
+                        {item.status === 'REQUESTED' && (
+                          <button
+                            disabled={busy}
+                            onClick={() =>
+                              void run(
+                                () =>
+                                  cancelWithdrawal({
+                                    data: { withdrawalId: item.id },
+                                  }),
+                                'Withdrawal cancelled.',
+                              )
+                            }
+                            className="mt-3 text-xs font-bold text-red-700"
+                          >
+                            Cancel request
+                          </button>
+                        )}
+                      </div>
+                    </details>
                   ))
                 ) : (
                   <div className="rounded-2xl border border-dashed border-black/10 p-5 text-sm text-[#6e857a]">

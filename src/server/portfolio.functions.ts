@@ -1,15 +1,18 @@
 import { createServerFn } from '@tanstack/react-start'
-import { and, desc, eq, gte, isNull, lte, or, sql } from 'drizzle-orm'
+import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { getDb } from '#/db'
 import {
   accrualRates,
+  dailyAccruals,
   investments,
   ledgerAccounts,
   ledgerEntries,
   mt5Positions,
   platformSettings,
+  referralCommissions,
   referralRelationships,
+  withdrawals,
 } from '#/db/schema'
 import { formatUsdt, money } from '#/domain/money'
 import { createInvestment } from './ledger.service'
@@ -40,69 +43,109 @@ export const getPortfolio = createServerFn({ method: 'GET' }).handler(
     )
     const available = balances[`USER:${user.id}:AVAILABLE`] ?? '0'
     const invested = balances[`USER:${user.id}:INVESTED`] ?? '0'
-    const [investmentSummary, settings, rate, latestInvestment, openPositions] =
-      await Promise.all([
-        db
-          .select({
-            principal: sql<string>`coalesce(sum(${investments.principal}), 0)`,
-            balance: sql<string>`coalesce(sum(${investments.compoundedBalance}), 0)`,
-          })
-          .from(investments)
-          .where(
-            and(
-              eq(investments.userId, user.id),
-              eq(investments.status, 'ACTIVE'),
+    const [
+      investmentSummary,
+      settings,
+      rate,
+      latestInvestment,
+      openPositions,
+      earnedProfit,
+      referralIncome,
+      pendingWithdrawal,
+    ] = await Promise.all([
+      db
+        .select({
+          principal: sql<string>`coalesce(sum(${investments.principal}), 0)`,
+          balance: sql<string>`coalesce(sum(${investments.compoundedBalance}), 0)`,
+        })
+        .from(investments)
+        .where(
+          and(
+            eq(investments.userId, user.id),
+            eq(investments.status, 'ACTIVE'),
+          ),
+        )
+        .then((rows) => rows.at(0)),
+      db
+        .select()
+        .from(platformSettings)
+        .where(eq(platformSettings.id, 1))
+        .limit(1)
+        .then((rows) => rows.at(0)),
+      db
+        .select({ dailyRatePercent: accrualRates.dailyRatePercent })
+        .from(accrualRates)
+        .where(
+          and(
+            lte(accrualRates.effectiveFrom, new Date()),
+            or(
+              isNull(accrualRates.effectiveUntil),
+              gte(accrualRates.effectiveUntil, new Date()),
             ),
-          )
-          .then((rows) => rows.at(0)),
-        db
-          .select()
-          .from(platformSettings)
-          .where(eq(platformSettings.id, 1))
-          .limit(1)
-          .then((rows) => rows.at(0)),
-        db
-          .select({ dailyRatePercent: accrualRates.dailyRatePercent })
-          .from(accrualRates)
-          .where(
-            and(
-              lte(accrualRates.effectiveFrom, new Date()),
-              or(
-                isNull(accrualRates.effectiveUntil),
-                gte(accrualRates.effectiveUntil, new Date()),
-              ),
-            ),
-          )
-          .orderBy(desc(accrualRates.effectiveFrom))
-          .limit(1)
-          .then((rows) => rows.at(0)),
-        db
-          .select({ activatedAt: investments.activatedAt })
-          .from(investments)
-          .where(
-            and(
-              eq(investments.userId, user.id),
-              eq(investments.status, 'ACTIVE'),
-            ),
-          )
-          .orderBy(desc(investments.activatedAt))
-          .limit(1)
-          .then((rows) => rows.at(0)),
-        db
-          .select({
-            ticket: mt5Positions.ticket,
-            symbol: mt5Positions.symbol,
-            side: mt5Positions.side,
-            volume: mt5Positions.volume,
-            entryPrice: mt5Positions.entryPrice,
-            currentPrice: mt5Positions.currentPrice,
-            floatingProfit: mt5Positions.floatingProfit,
-            isPublic: mt5Positions.isPublic,
-            openedAt: mt5Positions.openedAt,
-          })
-          .from(mt5Positions)
-          .orderBy(desc(mt5Positions.openedAt)),
-      ])
+          ),
+        )
+        .orderBy(desc(accrualRates.effectiveFrom))
+        .limit(1)
+        .then((rows) => rows.at(0)),
+      db
+        .select({ activatedAt: investments.activatedAt })
+        .from(investments)
+        .where(
+          and(
+            eq(investments.userId, user.id),
+            eq(investments.status, 'ACTIVE'),
+          ),
+        )
+        .orderBy(desc(investments.activatedAt))
+        .limit(1)
+        .then((rows) => rows.at(0)),
+      db
+        .select({
+          ticket: mt5Positions.ticket,
+          symbol: mt5Positions.symbol,
+          side: mt5Positions.side,
+          volume: mt5Positions.volume,
+          entryPrice: mt5Positions.entryPrice,
+          currentPrice: mt5Positions.currentPrice,
+          floatingProfit: mt5Positions.floatingProfit,
+          isPublic: mt5Positions.isPublic,
+          openedAt: mt5Positions.openedAt,
+        })
+        .from(mt5Positions)
+        .orderBy(desc(mt5Positions.openedAt)),
+      db
+        .select({
+          amount: sql<string>`coalesce(sum(${dailyAccruals.amount}), 0)`,
+        })
+        .from(dailyAccruals)
+        .innerJoin(investments, eq(investments.id, dailyAccruals.investmentId))
+        .where(eq(investments.userId, user.id))
+        .then((rows) => rows.at(0)),
+      db
+        .select({
+          amount: sql<string>`coalesce(sum(${referralCommissions.amount}), 0)`,
+        })
+        .from(referralCommissions)
+        .where(eq(referralCommissions.beneficiaryUserId, user.id))
+        .then((rows) => rows.at(0)),
+      db
+        .select({
+          amount: sql<string>`coalesce(sum(${withdrawals.amount}), 0)`,
+        })
+        .from(withdrawals)
+        .where(
+          and(
+            eq(withdrawals.userId, user.id),
+            inArray(withdrawals.status, [
+              'REQUESTED',
+              'APPROVED',
+              'PROCESSING',
+              'BROADCAST',
+            ]),
+          ),
+        )
+        .then((rows) => rows.at(0)),
+    ])
     const canViewLivePositions =
       user.role === 'ADMIN' || Boolean(latestInvestment)
     const visibleOpenPositions =
@@ -118,8 +161,13 @@ export const getPortfolio = createServerFn({ method: 'GET' }).handler(
       investedLedgerBalance: formatUsdt(invested),
       activePrincipal: formatUsdt(investmentSummary?.principal ?? 0),
       activeInvestmentBalance: formatUsdt(investmentSummary?.balance ?? 0),
+      earnedProfit: formatUsdt(earnedProfit?.amount ?? 0),
+      referralIncome: formatUsdt(referralIncome?.amount ?? 0),
+      pendingWithdrawal: formatUsdt(pendingWithdrawal?.amount ?? 0),
       totalPortfolio: formatUsdt(
-        money(available).add(investmentSummary?.balance ?? 0),
+        money(available)
+          .add(investmentSummary?.balance ?? 0)
+          .add(pendingWithdrawal?.amount ?? 0),
       ),
       dailyRatePercent: rate?.dailyRatePercent ?? '0',
       minimumInvestment: settings?.minimumInvestment ?? '300',

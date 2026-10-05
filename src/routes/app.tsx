@@ -135,18 +135,46 @@ function Home() {
                 {rate}% daily rate
               </span>
             </div>
-            <div className="mt-12 grid grid-cols-2 gap-4 border-t border-white/12 pt-6 md:grid-cols-4">
-              {[
-                ['Active investment', `$${portfolio.activeInvestmentBalance}`],
-                ['Available', `$${portfolio.available}`],
-                ['Principal', `$${portfolio.activePrincipal}`],
-                ['Daily rate', `${rate}%`],
-              ].map(([label, value]) => (
-                <div key={label}>
-                  <p className="text-xs text-white/50">{label}</p>
-                  <p className="mt-1 font-semibold">{value}</p>
-                </div>
-              ))}
+            <div className="mt-12 border-t border-white/12 pt-6">
+              <p className="text-[10px] font-bold uppercase tracking-[.14em] text-white/45">
+                Current account value
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-3">
+                {[
+                  ['Available to withdraw', `$${portfolio.available}`],
+                  [
+                    'Active investment',
+                    `$${portfolio.activeInvestmentBalance}`,
+                  ],
+                  ['Pending withdrawals', `$${portfolio.pendingWithdrawal}`],
+                ].map(([label, value]) => (
+                  <div key={label}>
+                    <p className="text-xs text-white/50">{label}</p>
+                    <p className="mt-1 font-semibold">{value}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="mt-6 rounded-2xl bg-white/7 p-4">
+              <p className="text-[10px] font-bold uppercase tracking-[.14em] text-white/45">
+                Lifetime earnings
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-3">
+                {[
+                  ['Investment profit', `$${portfolio.earnedProfit}`],
+                  ['Referral income', `$${portfolio.referralIncome}`],
+                  ['Active principal', `$${portfolio.activePrincipal}`],
+                ].map(([label, value]) => (
+                  <div key={label}>
+                    <p className="text-xs text-white/50">{label}</p>
+                    <p className="mt-1 font-semibold">{value}</p>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 text-[10px] leading-4 text-white/40">
+                Earnings are shown for transparency and are already reflected in
+                your available or investment balances.
+              </p>
             </div>
           </article>
 
