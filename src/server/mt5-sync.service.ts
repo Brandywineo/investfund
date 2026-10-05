@@ -141,8 +141,8 @@ export async function synchronizeMt5() {
             notifyUser({
               userId: recipient.id,
               category: 'TRADING',
-              title: `New ${position.side} position: ${position.symbol}`,
-              body: `Entry ${position.entryPrice}. Open the trading desk for live position details.`,
+              title: `${position.side} ${position.volume} lots · ${position.symbol}`,
+              body: `New position at ${position.entryPrice}. Open the trading desk for live details.`,
               href: '/trading',
               eventKey: `mt5-position:${position.ticket}:opened`,
             }),

@@ -14,6 +14,7 @@ import {
   savePushSubscription,
   updateNotificationPreferences,
 } from '#/server/notification.functions'
+import { formatKenyaDateTime, kenyaDateKey } from '#/domain/display-time'
 
 export const Route = createFileRoute('/notifications')({
   beforeLoad: async () => {
@@ -33,26 +34,15 @@ function decodeKey(value: string) {
 }
 
 function notificationTime(value: Date | string) {
-  return new Intl.DateTimeFormat('en-KE', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-    timeZone: 'Africa/Nairobi',
-  }).format(new Date(value))
+  return `${formatKenyaDateTime(value)} EAT`
 }
 
 function dayGroup(value: Date | string) {
-  const zone = 'Africa/Nairobi'
-  const date = new Intl.DateTimeFormat('en-CA', { timeZone: zone }).format(
-    new Date(value),
-  )
-  const today = new Intl.DateTimeFormat('en-CA', { timeZone: zone }).format(
-    new Date(),
-  )
+  const date = kenyaDateKey(value)
+  const today = kenyaDateKey(new Date())
   const yesterdayDate = new Date()
   yesterdayDate.setDate(yesterdayDate.getDate() - 1)
-  const yesterday = new Intl.DateTimeFormat('en-CA', { timeZone: zone }).format(
-    yesterdayDate,
-  )
+  const yesterday = kenyaDateKey(yesterdayDate)
   if (date === today) return 'Today'
   if (date === yesterday) return 'Yesterday'
   return 'Earlier'
@@ -74,6 +64,7 @@ function NotificationPage() {
   const [busy, setBusy] = useState(false)
   const [enabled, setEnabled] = useState<boolean | null>(null)
   const [filter, setFilter] = useState<NotificationFilter>('ALL')
+  const [visibleCount, setVisibleCount] = useState(20)
 
   useEffect(() => {
     void (async () => {
@@ -154,10 +145,11 @@ function NotificationPage() {
       }),
     [data.items, filter],
   )
+  const visible = filtered.slice(0, visibleCount)
   const groups = ['Today', 'Yesterday', 'Earlier']
     .map((label) => ({
       label,
-      items: filtered.filter((item) => dayGroup(item.createdAt) === label),
+      items: visible.filter((item) => dayGroup(item.createdAt) === label),
     }))
     .filter((group) => group.items.length)
   const preferences = data.preferences!
@@ -298,7 +290,10 @@ function NotificationPage() {
             ).map(([value, label]) => (
               <button
                 key={value}
-                onClick={() => setFilter(value)}
+                onClick={() => {
+                  setFilter(value)
+                  setVisibleCount(20)
+                }}
                 className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold ${filter === value ? 'bg-[#123d2d] text-white' : 'bg-[#f4f6f2] text-[#557065]'}`}
               >
                 {label}
@@ -356,10 +351,20 @@ function NotificationPage() {
               ))
             ) : (
               <p className="py-8 text-center text-sm text-[#6e857a]">
-                No notifications in this view.
+                {filter === 'UNREAD'
+                  ? "You're all caught up. There are no unread notifications."
+                  : 'No notifications in this view.'}
               </p>
             )}
           </div>
+          {visibleCount < filtered.length && (
+            <button
+              onClick={() => setVisibleCount((count) => count + 20)}
+              className="mt-5 w-full rounded-xl bg-[#f4f6f2] px-5 py-3 text-sm font-bold text-[#123d2d]"
+            >
+              Load 20 more · {filtered.length - visibleCount} remaining
+            </button>
+          )}
         </section>
       </div>
     </main>

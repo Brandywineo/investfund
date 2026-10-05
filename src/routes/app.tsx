@@ -2,6 +2,7 @@ import { createFileRoute, redirect, Link } from '@tanstack/react-router'
 import { currentUser } from '#/server/auth.functions'
 import { getPortfolio } from '#/server/portfolio.functions'
 import { PwaInstall } from '#/components/PwaInstall'
+import { formatKenyaDateTime } from '#/domain/display-time'
 
 export const Route = createFileRoute('/app')({
   beforeLoad: async () => {
@@ -233,8 +234,13 @@ function Home() {
                 </p>
                 <p className="mt-1 text-sm text-[#557065]">Current value</p>
               </div>
-              <div className="grid size-16 place-items-center rounded-full bg-white text-sm font-bold shadow-sm">
-                {rate}%
+              <div className="grid size-16 place-items-center rounded-full bg-white text-center shadow-sm">
+                <span>
+                  <b className="block text-sm">{rate}%</b>
+                  <span className="block text-[9px] font-semibold uppercase tracking-[.08em] text-[#6e857a]">
+                    Daily rate
+                  </span>
+                </span>
               </div>
             </div>
             <div className="mt-7 grid grid-cols-2 gap-3">
@@ -381,11 +387,7 @@ function Home() {
                         {item.title}
                       </p>
                       <p className="mt-1 text-xs text-[#83958d]">
-                        {new Intl.DateTimeFormat('en-KE', {
-                          dateStyle: 'medium',
-                          timeStyle: 'short',
-                          timeZone: 'Africa/Nairobi',
-                        }).format(new Date(item.effectiveAt))}
+                        {formatKenyaDateTime(item.effectiveAt)} EAT
                       </p>
                     </div>
                     <p

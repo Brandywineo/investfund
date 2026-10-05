@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { createFileRoute, Link, redirect } from '@tanstack/react-router'
 import { currentUser } from '#/server/auth.functions'
 import { getLedgerHistory } from '#/server/ledger.functions'
+import { formatKenyaDateTime } from '#/domain/display-time'
 
 export const Route = createFileRoute('/ledger')({
   beforeLoad: async () => {
@@ -66,11 +67,23 @@ const eventPresentation: Record<
 }
 
 function ledgerDate(value: string) {
-  return new Intl.DateTimeFormat('en-KE', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-    timeZone: 'Africa/Nairobi',
-  }).format(new Date(value))
+  return `${formatKenyaDateTime(value)} EAT`
+}
+
+function transactionDirection(eventType: string) {
+  if (eventType === 'WITHDRAWAL_RESERVED')
+    return { sign: '−', tone: 'text-red-700' }
+  if (
+    [
+      'DEPOSIT_CONFIRMED',
+      'DAILY_ACCRUAL',
+      'REFERRAL_COMMISSION_POSTED',
+      'INVESTMENT_PROFIT_RELEASED',
+      'WITHDRAWAL_RESERVATION_RELEASED',
+    ].includes(eventType)
+  )
+    return { sign: '+', tone: 'text-green-700' }
+  return { sign: '', tone: 'text-[#10251c]' }
 }
 
 function accountLabel(account: string) {
@@ -82,6 +95,7 @@ function accountLabel(account: string) {
 function LedgerPage() {
   const data = Route.useLoaderData()
   const [filter, setFilter] = useState<LedgerFilter>('ALL')
+  const [visibleCount, setVisibleCount] = useState(20)
   const filtered = data.transactions.filter((transaction) =>
     filter === 'ALL'
       ? true
@@ -137,7 +151,10 @@ function LedgerPage() {
           ).map(([value, label]) => (
             <button
               key={value}
-              onClick={() => setFilter(value)}
+              onClick={() => {
+                setFilter(value)
+                setVisibleCount(20)
+              }}
               className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold ${filter === value ? 'bg-[#123d2d] text-white' : 'bg-white ring-1 ring-black/8'}`}
             >
               {label}
@@ -151,7 +168,7 @@ function LedgerPage() {
               No matching ledger transactions.
             </p>
           ) : (
-            filtered.map((transaction) => {
+            filtered.slice(0, visibleCount).map((transaction) => {
               const presentation = eventPresentation[transaction.eventType] ?? {
                 title: transaction.eventType.replaceAll('_', ' ').toLowerCase(),
                 category: 'INVESTMENT' as const,
@@ -171,6 +188,7 @@ function LedgerPage() {
                     Number(primaryLine.debit),
                   ).toFixed(2)
                 : '0.00'
+              const direction = transactionDirection(transaction.eventType)
               return (
                 <details
                   key={transaction.id}
@@ -193,7 +211,10 @@ function LedgerPage() {
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-3">
-                      <b>{primaryAmount} USDT</b>
+                      <b className={direction.tone}>
+                        {direction.sign}
+                        {primaryAmount} USDT
+                      </b>
                       <span className="text-xl text-[#6e857a] transition-transform group-open:rotate-90">
                         ›
                       </span>
@@ -231,6 +252,14 @@ function LedgerPage() {
             })
           )}
         </div>
+        {visibleCount < filtered.length && (
+          <button
+            onClick={() => setVisibleCount((count) => count + 20)}
+            className="mt-4 w-full rounded-xl bg-white px-5 py-3 text-sm font-bold ring-1 ring-black/8"
+          >
+            Load 20 more · {filtered.length - visibleCount} remaining
+          </button>
+        )}
       </div>
     </main>
   )

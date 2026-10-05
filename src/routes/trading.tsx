@@ -3,6 +3,7 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { currentUser } from '#/server/auth.functions'
 import { getTradingDesk } from '#/server/trading.functions'
+import { formatKenyaDateTime } from '#/domain/display-time'
 
 export const Route = createFileRoute('/trading')({
   beforeLoad: async () => {
@@ -57,7 +58,7 @@ function TradingPage() {
           </span>
           <span>
             {data.sync?.lastSuccessfulSyncAt
-              ? `Updated ${new Date(data.sync.lastSuccessfulSyncAt).toLocaleString()}`
+              ? `Updated ${formatKenyaDateTime(data.sync.lastSuccessfulSyncAt)} EAT`
               : 'Waiting for the first MT5 synchronization'}
           </span>
         </div>
@@ -150,7 +151,7 @@ function TradingPage() {
                         />
                       </div>
                       <p className="mt-4 text-xs text-[#829088]">
-                        Placed {new Date(order.placedAt).toLocaleString()}
+                        Placed {formatKenyaDateTime(order.placedAt)} EAT
                       </p>
                     </article>
                   ))}
@@ -276,7 +277,7 @@ function PositionCard({
         </b>
       </div>
       <p className="mt-3 text-xs text-[#829088]">
-        Opened {new Date(position.openedAt).toLocaleString()}
+        Opened {formatKenyaDateTime(position.openedAt)} EAT
       </p>
     </article>
   )
@@ -310,7 +311,7 @@ function CompletedPositionCard({
           </b>
           <p className="text-xs text-[#829088]">
             {position.closedAt
-              ? new Date(position.closedAt).toLocaleString()
+              ? `${formatKenyaDateTime(position.closedAt)} EAT`
               : 'Closing time pending'}
           </p>
         </div>

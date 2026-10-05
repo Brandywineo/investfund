@@ -7,6 +7,7 @@ import {
   useRouter,
 } from '@tanstack/react-router'
 import { currentUser } from '#/server/auth.functions'
+import { formatKenyaDateTime } from '#/domain/display-time'
 import { activateInvestment, getPortfolio } from '#/server/portfolio.functions'
 import {
   cancelInvestmentExit,
@@ -284,7 +285,7 @@ function InvestPage() {
                   <div className="flex flex-wrap justify-between gap-3">
                     <b>{request.status}</b>
                     <span className="text-xs text-[#6e857a]">
-                      {new Date(request.createdAt).toLocaleString()}
+                      {formatKenyaDateTime(request.createdAt)} EAT
                     </span>
                   </div>
                   {request.decisionReason && (
@@ -295,7 +296,7 @@ function InvestPage() {
                   {request.reviewAfter && request.status === 'DEFERRED' && (
                     <p className="mt-1 text-xs text-[#6e857a]">
                       Review expected after{' '}
-                      {new Date(request.reviewAfter).toLocaleString()}
+                      {formatKenyaDateTime(request.reviewAfter)} EAT
                     </p>
                   )}
                   {request.releasedAmount && (
