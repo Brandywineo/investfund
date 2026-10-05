@@ -1,9 +1,10 @@
 import { createServer } from 'node:http'
 import type { IncomingMessage } from 'node:http'
 import { mkdir } from 'node:fs/promises'
-import makeWASocket, {
+import {
   DisconnectReason,
   fetchLatestBaileysVersion,
+  makeWASocket,
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys'
 import qrcode from 'qrcode-terminal'
