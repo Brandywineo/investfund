@@ -480,6 +480,7 @@ export const getAdminWithdrawals = createServerFn({ method: 'GET' }).handler(
           userId: withdrawals.userId,
           userName: users.displayName,
           userEmail: users.email,
+          reservedBalance: sql<string>`coalesce((select sum(w.amount) from withdrawals w where w.user_id = ${users.id} and w.status in ('REQUESTED', 'APPROVED', 'PROCESSING', 'BROADCAST')), 0)`,
           amount: withdrawals.amount,
           feeAmount: withdrawals.feeAmount,
           netAmount: withdrawals.netAmount,
@@ -542,8 +543,8 @@ export const getAdminWithdrawals = createServerFn({ method: 'GET' }).handler(
         available: '0',
         invested: '0',
       }
-      if (balanceType === 'AVAILABLE') current.available = formatUsdt(balance)
-      if (balanceType === 'INVESTED') current.invested = formatUsdt(balance)
+      if (balanceType === 'AVAILABLE') current.available = balance.toFixed(8)
+      if (balanceType === 'INVESTED') current.invested = balance.toFixed(8)
       userBalances.set(userId, current)
     }
 
@@ -584,9 +585,17 @@ export const getAdminWithdrawals = createServerFn({ method: 'GET' }).handler(
       wallets: sourceWallets,
       withdrawals: withdrawalRows.map((row) => ({
         ...row,
-        userBalance: userBalances.get(row.userId) ?? {
-          available: '0.00',
-          invested: '0.00',
+        userBalance: {
+          ...(userBalances.get(row.userId) ?? {
+            available: '0.00',
+            invested: '0.00',
+          }),
+          reserved: formatUsdt(row.reservedBalance),
+          total: formatUsdt(
+            money(userBalances.get(row.userId)?.available ?? 0)
+              .add(userBalances.get(row.userId)?.invested ?? 0)
+              .add(row.reservedBalance),
+          ),
         },
       })),
     }

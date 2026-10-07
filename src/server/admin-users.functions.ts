@@ -5,11 +5,16 @@ import { getDb } from '#/db'
 import {
   auditLogs,
   deposits,
+  investments,
+  investmentExitRequests,
+  ledgerAccounts,
+  ledgerEntries,
   users,
   walletAddresses,
   walletSets,
   withdrawals,
 } from '#/db/schema'
+import { formatUsdt, money } from '#/domain/money'
 import { getSessionUser } from './session'
 import { rotateUserWalletAddress } from './wallet-address.service'
 
@@ -22,7 +27,7 @@ async function requireAdmin() {
 
 export const listUsers = createServerFn({ method: 'GET' }).handler(async () => {
   await requireAdmin()
-  return getDb()
+  const rows = await getDb()
     .select({
       id: users.id,
       displayName: users.displayName,
@@ -37,6 +42,11 @@ export const listUsers = createServerFn({ method: 'GET' }).handler(async () => {
       walletSetName: walletSets.name,
       confirmedDeposits: sql<string>`coalesce((select sum(${deposits.amount}) from ${deposits} where ${deposits.userId} = ${users.id} and ${deposits.status} = 'CONFIRMED'), 0)`,
       confirmedWithdrawals: sql<string>`coalesce((select sum(${withdrawals.amount}) from ${withdrawals} where ${withdrawals.userId} = ${users.id} and ${withdrawals.status} = 'CONFIRMED'), 0)`,
+      availableBalance: sql<string>`coalesce((select sum(${ledgerEntries.credit} - ${ledgerEntries.debit}) from ${ledgerEntries} inner join ${ledgerAccounts} on ${ledgerAccounts.id} = ${ledgerEntries.accountId} where ${ledgerAccounts.ownerUserId} = ${users.id} and ${ledgerAccounts.code} = 'USER:' || ${users.id}::text || ':AVAILABLE'), 0)`,
+      investedBalance: sql<string>`coalesce((select sum(${ledgerEntries.credit} - ${ledgerEntries.debit}) from ${ledgerEntries} inner join ${ledgerAccounts} on ${ledgerAccounts.id} = ${ledgerEntries.accountId} where ${ledgerAccounts.ownerUserId} = ${users.id} and ${ledgerAccounts.code} = 'USER:' || ${users.id}::text || ':INVESTED'), 0)`,
+      pendingWithdrawalAmount: sql<string>`coalesce((select sum(${withdrawals.amount}) from ${withdrawals} where ${withdrawals.userId} = ${users.id} and ${withdrawals.status} in ('REQUESTED', 'APPROVED', 'PROCESSING', 'BROADCAST')), 0)`,
+      pendingWithdrawalNet: sql<string>`coalesce((select sum(${withdrawals.netAmount}) from ${withdrawals} where ${withdrawals.userId} = ${users.id} and ${withdrawals.status} in ('REQUESTED', 'APPROVED', 'PROCESSING', 'BROADCAST')), 0)`,
+      pendingExitAmount: sql<string>`coalesce((select sum(${investments.compoundedBalance}) from ${investmentExitRequests} inner join ${investments} on ${investments.id} = ${investmentExitRequests.investmentId} where ${investmentExitRequests.userId} = ${users.id} and ${investmentExitRequests.status} in ('REQUESTED', 'DEFERRED')), 0)`,
     })
     .from(users)
     .leftJoin(
@@ -49,6 +59,14 @@ export const listUsers = createServerFn({ method: 'GET' }).handler(async () => {
     .leftJoin(walletSets, eq(walletSets.id, walletAddresses.walletSetId))
     .orderBy(asc(users.createdAt))
     .limit(250)
+  return rows.map((row) => ({
+    ...row,
+    totalBalance: formatUsdt(
+      money(row.availableBalance)
+        .add(row.investedBalance)
+        .add(row.pendingWithdrawalAmount),
+    ),
+  }))
 })
 
 export const listWalletSetOptions = createServerFn({ method: 'GET' }).handler(
