@@ -31,6 +31,17 @@ function UsersPage() {
   const router = useRouter()
   const [error, setError] = useState('')
   const [busyId, setBusyId] = useState('')
+  const [search, setSearch] = useState('')
+  const [requestsOnly, setRequestsOnly] = useState(false)
+  const visibleUsers = users.filter(
+    (user) =>
+      `${user.displayName} ${user.email}`
+        .toLowerCase()
+        .includes(search.toLowerCase()) &&
+      (!requestsOnly ||
+        Number(user.pendingWithdrawalAmount) > 0 ||
+        Number(user.pendingExitAmount) > 0),
+  )
   async function change(
     userId: string,
     role: 'USER' | 'MANAGER' | 'ADMIN',
@@ -69,7 +80,7 @@ function UsersPage() {
               Administration
             </p>
             <h1 className="mt-2 text-3xl font-semibold tracking-[-.04em] sm:text-4xl">
-              Users and access
+              Users, balances and access
             </h1>
           </div>
           <Link to="/admin" className="text-sm font-bold">
@@ -81,13 +92,53 @@ function UsersPage() {
             {error}
           </p>
         )}
+        <p className="mt-5 text-sm text-[#557065]">
+          Current balance includes available funds, invested funds and reserved
+          withdrawals. Exit requests are already included in invested funds.
+          Amounts are in USDT.
+        </p>
+        <div className="mt-5 flex flex-wrap items-center gap-4">
+          <input
+            aria-label="Search users"
+            placeholder="Search name or email"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            className="rounded-xl border border-black/10 bg-white px-4 py-3 text-sm"
+          />
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={requestsOnly}
+              onChange={(event) => setRequestsOnly(event.target.checked)}
+            />{' '}
+            Has withdrawal or exit request
+          </label>
+          <button
+            onClick={() => void router.invalidate()}
+            className="text-sm font-bold"
+          >
+            Refresh balances
+          </button>
+          <Link to="/admin/withdrawals" className="text-sm font-bold">
+            Review withdrawals →
+          </Link>
+          <Link to="/admin/exits" className="text-sm font-bold">
+            Review exits →
+          </Link>
+        </div>
+        <p className="mt-3 text-xs text-[#6e857a]">
+          Showing {visibleUsers.length} of {users.length} loaded users (up to
+          250).
+        </p>
         <div className="mt-8 overflow-x-auto rounded-[2rem] bg-white ring-1 ring-black/5">
-          <table className="w-full min-w-[1100px] text-left">
+          <table className="w-full min-w-[1550px] text-left">
             <thead className="border-b border-black/6 text-xs uppercase tracking-[.12em] text-[#6e857a]">
               <tr>
                 <th className="p-5">User</th>
                 <th>Joined</th>
                 <th>Permanent deposit address</th>
+                <th>Current balance</th>
+                <th>Money out requests</th>
                 <th>Confirmed activity</th>
                 <th>Role</th>
                 <th>Status</th>
@@ -95,7 +146,7 @@ function UsersPage() {
               </tr>
             </thead>
             <tbody>
-              {users.map((user) => (
+              {visibleUsers.map((user) => (
                 <tr
                   key={user.id}
                   className="border-b border-black/6 last:border-0"
@@ -157,6 +208,39 @@ function UsersPage() {
                     )}
                   </td>
                   <td className="pr-4 text-xs text-[#6e857a]">
+                    <b className="block text-base text-[#10251c]">
+                      {user.totalBalance} USDT
+                    </b>
+                    <span className="block">
+                      Available {Number(user.availableBalance).toFixed(2)}
+                    </span>
+                    <span className="block">
+                      Invested {Number(user.investedBalance).toFixed(2)}
+                    </span>
+                    <span className="block">
+                      Reserved {Number(user.pendingWithdrawalAmount).toFixed(2)}
+                    </span>
+                  </td>
+                  <td className="pr-4 text-xs text-[#6e857a]">
+                    <Link
+                      to="/admin/withdrawals"
+                      className="block font-bold text-[#10251c]"
+                    >
+                      Withdrawal{' '}
+                      {Number(user.pendingWithdrawalAmount).toFixed(2)} USDT
+                    </Link>
+                    <span className="block">
+                      Net payout {Number(user.pendingWithdrawalNet).toFixed(2)}
+                    </span>
+                    <Link
+                      to="/admin/exits"
+                      className="mt-2 block font-bold text-[#10251c]"
+                    >
+                      Exit {Number(user.pendingExitAmount).toFixed(2)} USDT
+                    </Link>
+                    <span className="block">Included in invested funds</span>
+                  </td>
+                  <td className="pr-4 text-xs text-[#6e857a]">
                     <b className="block text-[#10251c]">
                       +{Number(user.confirmedDeposits).toFixed(2)} USDT
                     </b>
@@ -208,6 +292,16 @@ function UsersPage() {
                   </td>
                 </tr>
               ))}
+              {visibleUsers.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={9}
+                    className="p-8 text-center text-sm text-[#6e857a]"
+                  >
+                    No users match these filters.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

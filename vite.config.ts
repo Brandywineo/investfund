@@ -12,7 +12,7 @@ const config = defineConfig(({ mode }) => ({
   plugins: [
     ...(mode === 'test' ? [] : [devtools(), nitro()]),
     tailwindcss(),
-    tanstackStart(),
+    ...(mode === 'test' ? [] : [tanstackStart()]),
     viteReact(),
   ],
 }))

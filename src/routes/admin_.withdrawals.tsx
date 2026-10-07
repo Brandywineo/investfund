@@ -275,7 +275,10 @@ function AdminWithdrawalsPage() {
                   </div>
                   <div className="rounded-2xl bg-[#f4f6f2] p-4">
                     <p className="text-[10px] font-bold uppercase text-[#6e857a]">
-                      User ledger after reservation
+                      Current user balance
+                    </p>
+                    <p className="mt-2 text-sm font-bold">
+                      Total {item.userBalance.total} USDT
                     </p>
                     <p className="mt-2 text-sm">
                       Available{' '}
@@ -288,6 +291,10 @@ function AdminWithdrawalsPage() {
                       <strong>
                         {Number(item.userBalance.invested).toFixed(2)} USDT
                       </strong>
+                    </p>
+                    <p className="mt-1 text-sm">
+                      Reserved withdrawals{' '}
+                      <strong>{item.userBalance.reserved} USDT</strong>
                     </p>
                   </div>
                 </div>

@@ -38,6 +38,7 @@ import { Route as AdminWalletSetsRouteImport } from './routes/admin_.wallet-sets
 import { Route as AdminWalletTransfersRouteImport } from './routes/admin_.wallet-transfers'
 import { Route as AdminWalletsRouteImport } from './routes/admin_.wallets'
 import { Route as AdminWithdrawalsRouteImport } from './routes/admin_.withdrawals'
+import { Route as ApiCommunityImagesMessageIdRouteImport } from './routes/api.community-images.$messageId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -184,6 +185,12 @@ const AdminWithdrawalsRoute = AdminWithdrawalsRouteImport.update({
   path: '/admin/withdrawals',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiCommunityImagesMessageIdRoute =
+  ApiCommunityImagesMessageIdRouteImport.update({
+    id: '/api/community-images/$messageId',
+    path: '/api/community-images/$messageId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -215,6 +222,7 @@ export interface FileRoutesByFullPath {
   '/admin/wallet-transfers': typeof AdminWalletTransfersRoute
   '/admin/wallets': typeof AdminWalletsRoute
   '/admin/withdrawals': typeof AdminWithdrawalsRoute
+  '/api/community-images/$messageId': typeof ApiCommunityImagesMessageIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -246,6 +254,7 @@ export interface FileRoutesByTo {
   '/admin/wallet-transfers': typeof AdminWalletTransfersRoute
   '/admin/wallets': typeof AdminWalletsRoute
   '/admin/withdrawals': typeof AdminWithdrawalsRoute
+  '/api/community-images/$messageId': typeof ApiCommunityImagesMessageIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -278,6 +287,7 @@ export interface FileRoutesById {
   '/admin_/wallet-transfers': typeof AdminWalletTransfersRoute
   '/admin_/wallets': typeof AdminWalletsRoute
   '/admin_/withdrawals': typeof AdminWithdrawalsRoute
+  '/api/community-images/$messageId': typeof ApiCommunityImagesMessageIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -311,6 +321,7 @@ export interface FileRouteTypes {
     | '/admin/wallet-transfers'
     | '/admin/wallets'
     | '/admin/withdrawals'
+    | '/api/community-images/$messageId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -342,6 +353,7 @@ export interface FileRouteTypes {
     | '/admin/wallet-transfers'
     | '/admin/wallets'
     | '/admin/withdrawals'
+    | '/api/community-images/$messageId'
   id:
     | '__root__'
     | '/'
@@ -373,6 +385,7 @@ export interface FileRouteTypes {
     | '/admin_/wallet-transfers'
     | '/admin_/wallets'
     | '/admin_/withdrawals'
+    | '/api/community-images/$messageId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -405,6 +418,7 @@ export interface RootRouteChildren {
   AdminWalletTransfersRoute: typeof AdminWalletTransfersRoute
   AdminWalletsRoute: typeof AdminWalletsRoute
   AdminWithdrawalsRoute: typeof AdminWithdrawalsRoute
+  ApiCommunityImagesMessageIdRoute: typeof ApiCommunityImagesMessageIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -612,6 +626,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminWithdrawalsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/community-images/$messageId': {
+      id: '/api/community-images/$messageId'
+      path: '/api/community-images/$messageId'
+      fullPath: '/api/community-images/$messageId'
+      preLoaderRoute: typeof ApiCommunityImagesMessageIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -645,6 +666,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminWalletTransfersRoute: AdminWalletTransfersRoute,
   AdminWalletsRoute: AdminWalletsRoute,
   AdminWithdrawalsRoute: AdminWithdrawalsRoute,
+  ApiCommunityImagesMessageIdRoute: ApiCommunityImagesMessageIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

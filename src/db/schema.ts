@@ -16,6 +16,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
+import type { AnyPgColumn } from 'drizzle-orm/pg-core'
 
 export const userRole = pgEnum('user_role', ['USER', 'MANAGER', 'ADMIN'])
 export const userStatus = pgEnum('user_status', [
@@ -1412,5 +1413,100 @@ export const auditLogs = pgTable(
   },
   (table) => [
     index('audit_logs_entity_idx').on(table.entityType, table.entityId),
+  ],
+)
+
+export const communityGroups = pgTable('community_groups', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  name: text('name').notNull(),
+  description: text('description').notNull(),
+  announcementsOnly: boolean('announcements_only').default(false).notNull(),
+  managerUserId: uuid('manager_user_id').references(() => users.id),
+  ...timestamps,
+})
+
+export const communityMembers = pgTable(
+  'community_members',
+  {
+    groupId: uuid('group_id')
+      .references(() => communityGroups.id)
+      .notNull(),
+    userId: uuid('user_id')
+      .references(() => users.id)
+      .notNull(),
+    mutedUntil: timestamp('muted_until', { withTimezone: true }),
+    joinedAt: timestamp('joined_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.groupId, table.userId] })],
+)
+
+export const communityMessages = pgTable(
+  'community_messages',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    groupId: uuid('group_id')
+      .references(() => communityGroups.id)
+      .notNull(),
+    authorUserId: uuid('author_user_id')
+      .references(() => users.id)
+      .notNull(),
+    body: text('body').notNull(),
+    imageData: text('image_data'),
+    replyToId: uuid('reply_to_id').references(
+      (): AnyPgColumn => communityMessages.id,
+    ),
+    pinned: boolean('pinned').default(false).notNull(),
+    hiddenAt: timestamp('hidden_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    index('community_messages_group_created_idx').on(
+      table.groupId,
+      table.createdAt,
+      table.id,
+    ),
+    check('community_message_body_length', sql`length(${table.body}) <= 2000`),
+  ],
+)
+
+export const communityReactions = pgTable(
+  'community_reactions',
+  {
+    messageId: uuid('message_id')
+      .references(() => communityMessages.id)
+      .notNull(),
+    userId: uuid('user_id')
+      .references(() => users.id)
+      .notNull(),
+    emoji: text('emoji').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.messageId, table.userId, table.emoji] }),
+  ],
+)
+
+export const communityReports = pgTable(
+  'community_reports',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    messageId: uuid('message_id')
+      .references(() => communityMessages.id)
+      .notNull(),
+    reporterUserId: uuid('reporter_user_id')
+      .references(() => users.id)
+      .notNull(),
+    reason: text('reason').notNull(),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex('community_report_user_message_unique').on(
+      table.messageId,
+      table.reporterUserId,
+    ),
   ],
 )
