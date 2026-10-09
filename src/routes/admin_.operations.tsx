@@ -53,6 +53,15 @@ function OperationsPage() {
       healthy: data.chainAgeMs <= 120_000,
     },
     {
+      label: 'BNB history scanner',
+      value: data.chain?.lastNativeError ? 'Retrying' : 'Scanning',
+      detail:
+        data.chain?.lastNativeScannedBlock == null
+          ? 'Awaiting checkpoint'
+          : `${Math.max(0, (data.chain.lastHeadBlock ?? 0) - data.chain.lastNativeScannedBlock).toLocaleString()} blocks behind`,
+      healthy: !data.chain?.lastNativeError,
+    },
+    {
       label: 'RPC pool',
       value: `${data.lastRun?.rpcEndpointCount ?? 0} endpoints`,
       detail: `${data.lastRun?.rpcFailovers ?? 0} failovers in latest run`,

@@ -66,8 +66,10 @@ export async function confirmDeposit(depositId: string, actorUserId?: string) {
       .select()
       .from(deposits)
       .where(eq(deposits.id, depositId))
+      .for('update')
       .limit(1)
       .then((rows) => rows.at(0))
+    if (deposit?.status === 'CONFIRMED') return deposit
     if (!deposit || deposit.status !== 'PENDING')
       throw new Error('Pending deposit not found')
     if (!deposit.txHash)
