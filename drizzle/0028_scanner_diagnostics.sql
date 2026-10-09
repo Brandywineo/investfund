@@ -1,0 +1,1 @@
+ALTER TABLE "chain_worker_runs" ADD COLUMN "diagnostics" jsonb;

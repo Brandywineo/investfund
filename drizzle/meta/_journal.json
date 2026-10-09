@@ -197,6 +197,13 @@
       "when": 1791537843110,
       "tag": "0027_scanner_native_checkpoint",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1791542751174,
+      "tag": "0028_scanner_diagnostics",
+      "breakpoints": true
     }
   ]
 }

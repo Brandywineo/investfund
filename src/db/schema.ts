@@ -1,3 +1,4 @@
+import type { ScannerDiagnostics } from '#/domain/scanner-diagnostics'
 import {
   boolean,
   check,
@@ -1057,6 +1058,7 @@ export const chainWorkerRuns = pgTable(
     runtimeMs: integer('runtime_ms'),
     rpcEndpointCount: integer('rpc_endpoint_count'),
     rpcFailovers: integer('rpc_failovers').default(0).notNull(),
+    diagnostics: jsonb('diagnostics').$type<Array<ScannerDiagnostics>>(),
     credited: integer('credited').default(0).notNull(),
     swept: integer('swept').default(0).notNull(),
     error: text('error'),

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { RpcPool } from './rpc-pool'
 
 describe('RPC pool request deadlines', () => {
@@ -21,6 +21,7 @@ describe('RPC pool request deadlines', () => {
       expect(result).toBe('healthy')
       expect(attempted).toEqual([0, 1])
       expect(pool.snapshot().failovers).toBe(1)
+      expect(pool.diagnosticSnapshot().requests[0].category).toBe('TIMEOUT')
     } finally {
       pool.destroy()
     }
@@ -50,4 +51,71 @@ describe('RPC pool request deadlines', () => {
       pool.destroy()
     }
   })
+})
+
+it('records failures by method and endpoint without storing credential-bearing URLs or error messages', async () => {
+  const pool = new RpcPool({
+    chainId: 56,
+    urls: [
+      'https://rpc-one.invalid/v2/SECRET?token=PRIVATE',
+      'https://rpc-two.invalid/v2/OTHER',
+    ],
+  })
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  try {
+    await pool.run(
+      async ({ index }) => {
+        if (index === 0)
+          throw Object.assign(
+            new Error('429 https://rpc-one.invalid/v2/SECRET'),
+            { status: 429 },
+          )
+        return 'ok'
+      },
+      { method: 'eth_getLogs' },
+    )
+    const diagnostics = pool.diagnosticSnapshot()
+    expect(
+      diagnostics.requests.map((row) => [
+        row.endpoint,
+        row.method,
+        row.category,
+        row.count,
+      ]),
+    ).toEqual([
+      [1, 'eth_getLogs', 'RATE_LIMIT', 1],
+      [2, 'eth_getLogs', 'SUCCESS', 1],
+    ])
+    expect(JSON.stringify(diagnostics)).not.toMatch(
+      /SECRET|PRIVATE|OTHER|https:/,
+    )
+    expect(JSON.stringify(warning.mock.calls)).not.toMatch(
+      /SECRET|PRIVATE|OTHER|https:/,
+    )
+  } finally {
+    pool.destroy()
+    warning.mockRestore()
+  }
+})
+
+it('distinguishes adaptive query limits from ordinary permanent errors', async () => {
+  const pool = new RpcPool({
+    chainId: 56,
+    urls: ['https://rpc.invalid/v2/SECRET'],
+  })
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  try {
+    await expect(
+      pool.run(
+        async () => {
+          throw new Error('LOG_RANGE_LIMIT')
+        },
+        { method: 'eth_getLogs' },
+      ),
+    ).rejects.toThrow('LOG_RANGE_LIMIT')
+    expect(pool.diagnosticSnapshot().requests[0].category).toBe('QUERY_LIMIT')
+  } finally {
+    pool.destroy()
+    warning.mockRestore()
+  }
 })
