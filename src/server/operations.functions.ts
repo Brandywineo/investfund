@@ -1,7 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
-import { getDb } from '#/db'
+import { getDb, getPool } from '#/db'
 import {
   auditLogs,
   chainWatcherState,
@@ -62,77 +62,93 @@ export const checkpointChainScanner = createServerFn({ method: 'POST' })
     z.object({
       confirmation: z.literal('RESET SCANNER'),
       reason: z.string().trim().min(10).max(300),
-      safetyOffset: z.number().int().min(2).max(100).default(10),
+      safetyOffset: z.number().int().min(2).max(200).default(200),
     }),
   )
   .handler(async ({ data }) => {
     const admin = await requireAdmin()
-    const db = getDb()
-    const state = await db
-      .select()
-      .from(chainWatcherState)
-      .where(eq(chainWatcherState.id, 1))
-      .limit(1)
-      .then((rows) => rows.at(0))
-    if (!state) throw new Error('The scanner has not been initialized yet')
-    const settings = await db
-      .select({ chainId: custodySettings.chainId })
-      .from(custodySettings)
-      .where(eq(custodySettings.id, 1))
-      .limit(1)
-      .then((rows) => rows.at(0))
-    if (!settings) throw new Error('Custody settings are not initialized')
-    const rpcPool = new RpcPool({
-      chainId: settings.chainId,
-      startIndex: state.activeRpcIndex,
-    })
-    const liveHead = await rpcPool
-      .run(({ provider }) => provider.getBlockNumber())
-      .finally(() => rpcPool.destroy())
-    const target = Math.max(0, liveHead - data.safetyOffset)
-    if (target <= state.lastScannedBlock)
-      throw new Error('The scanner is already at or ahead of this checkpoint')
-    const now = new Date()
-    await db.transaction(async (tx) => {
-      await tx
-        .update(chainWatcherState)
-        .set({
-          lastScannedBlock: target,
-          lastHeadBlock: liveHead,
-          lastError: null,
-          updatedAt: now,
-        })
+    const connection = await getPool().connect()
+    let locked = false
+    try {
+      const result = await connection.query<{ acquired: boolean }>(
+        'SELECT pg_try_advisory_lock(569001) AS acquired',
+      )
+      locked = result.rows[0]?.acquired === true
+      if (!locked)
+        throw new Error('Stop the chain worker before resetting its checkpoint')
+      const db = getDb()
+      const state = await db
+        .select()
+        .from(chainWatcherState)
         .where(eq(chainWatcherState.id, 1))
-      await tx.insert(auditLogs).values({
-        actorUserId: admin.id,
-        action: 'CHAIN_SCANNER_CHECKPOINTED',
-        entityType: 'chain_watcher_state',
-        entityId: '1',
-        before: {
-          lastScannedBlock: state.lastScannedBlock,
-          lastHeadBlock: state.lastHeadBlock,
-        },
-        after: {
-          lastScannedBlock: target,
-          liveHeadBlock: liveHead,
-          safetyOffset: data.safetyOffset,
-          skippedFrom: state.lastScannedBlock + 1,
-          skippedTo: target,
-          reason: data.reason,
-        },
+        .limit(1)
+        .then((rows) => rows.at(0))
+      if (!state) throw new Error('The scanner has not been initialized yet')
+      const settings = await db
+        .select({ chainId: custodySettings.chainId })
+        .from(custodySettings)
+        .where(eq(custodySettings.id, 1))
+        .limit(1)
+        .then((rows) => rows.at(0))
+      if (!settings) throw new Error('Custody settings are not initialized')
+      const rpcPool = new RpcPool({
+        chainId: settings.chainId,
+        startIndex: state.activeRpcIndex,
       })
-      await tx.insert(operationalEvents).values({
-        eventKey: `chain:checkpoint:${now.getTime()}`,
-        component: 'CHAIN',
-        severity: 'INFO',
-        status: 'RESOLVED',
-        title: 'Scanner checkpoint changed by administrator',
-        message: `Scanner advanced from block ${state.lastScannedBlock} to ${target}.`,
-        metadata: { reason: data.reason, safetyOffset: data.safetyOffset },
-        openedAt: now,
-        lastObservedAt: now,
-        resolvedAt: now,
+      const liveHead = await rpcPool
+        .run(({ provider }) => provider.getBlockNumber())
+        .finally(() => rpcPool.destroy())
+      const target = Math.max(0, liveHead - data.safetyOffset)
+      if (target <= state.lastScannedBlock)
+        throw new Error('The scanner is already at or ahead of this checkpoint')
+      const now = new Date()
+      await db.transaction(async (tx) => {
+        await tx
+          .update(chainWatcherState)
+          .set({
+            lastScannedBlock: target,
+            lastHeadBlock: liveHead,
+            lastError: null,
+            updatedAt: now,
+          })
+          .where(eq(chainWatcherState.id, 1))
+        await tx.insert(auditLogs).values({
+          actorUserId: admin.id,
+          action: 'CHAIN_SCANNER_CHECKPOINTED',
+          entityType: 'chain_watcher_state',
+          entityId: '1',
+          before: {
+            lastScannedBlock: state.lastScannedBlock,
+            lastHeadBlock: state.lastHeadBlock,
+          },
+          after: {
+            lastScannedBlock: target,
+            liveHeadBlock: liveHead,
+            safetyOffset: data.safetyOffset,
+            skippedFrom: state.lastScannedBlock + 1,
+            skippedTo: target,
+            reason: data.reason,
+          },
+        })
+        await tx.insert(operationalEvents).values({
+          eventKey: `chain:checkpoint:${now.getTime()}`,
+          component: 'CHAIN',
+          severity: 'INFO',
+          status: 'RESOLVED',
+          title: 'Scanner checkpoint changed by administrator',
+          message: `Scanner advanced from block ${state.lastScannedBlock} to ${target}.`,
+          metadata: { reason: data.reason, safetyOffset: data.safetyOffset },
+          openedAt: now,
+          lastObservedAt: now,
+          resolvedAt: now,
+        })
       })
-    })
-    return { success: true, previous: state.lastScannedBlock, target }
+      return { success: true, previous: state.lastScannedBlock, target }
+    } finally {
+      try {
+        if (locked) await connection.query('SELECT pg_advisory_unlock(569001)')
+      } finally {
+        connection.release()
+      }
+    }
   })

@@ -106,6 +106,8 @@ async function mapConcurrent<T, TResult>(
   return output
 }
 
+const learnedLogRanges = new WeakMap<RpcPool, number>()
+
 export async function chunkedLogs(input: {
   rpcPool: RpcPool
   filter: Filter
@@ -118,12 +120,26 @@ export async function chunkedLogs(input: {
   const ranges = scannerBlockRanges(
     input.fromBlock,
     input.toBlock,
-    input.chunkBlocks,
+    Math.min(
+      input.chunkBlocks,
+      learnedLogRanges.get(input.rpcPool) ?? input.chunkBlocks,
+    ),
   )
   async function query(range: {
     fromBlock: number
     toBlock: number
   }): Promise<Array<Log>> {
+    const learned = learnedLogRanges.get(input.rpcPool)
+    if (learned && range.toBlock - range.fromBlock + 1 > learned) {
+      const output: Array<Log> = []
+      for (const smaller of scannerBlockRanges(
+        range.fromBlock,
+        range.toBlock,
+        learned,
+      ))
+        output.push(...(await query(smaller)))
+      return output
+    }
     try {
       return await retry(() =>
         input.rpcPool.run(
@@ -149,6 +165,14 @@ export async function chunkedLogs(input: {
         range.fromBlock === range.toBlock
       )
         throw error
+      const limit = Math.max(
+        1,
+        Math.floor((range.toBlock - range.fromBlock + 1) / 2),
+      )
+      learnedLogRanges.set(
+        input.rpcPool,
+        Math.min(learnedLogRanges.get(input.rpcPool) ?? limit, limit),
+      )
       const midpoint = Math.floor((range.fromBlock + range.toBlock) / 2)
       const left = await query({
         fromBlock: range.fromBlock,
@@ -709,9 +733,7 @@ async function runChainWorkerBatch(
             },
             fromBlock,
             toBlock,
-            chunkBlocks: catchup
-              ? Math.max(100, logChunkBlocks)
-              : logChunkBlocks,
+            chunkBlocks: logChunkBlocks,
             concurrency: rpcConcurrency,
           })
           for (const log of logs) {
@@ -893,7 +915,7 @@ async function runChainWorkerBatch(
           },
           fromBlock,
           toBlock,
-          chunkBlocks: catchup ? Math.max(100, logChunkBlocks) : logChunkBlocks,
+          chunkBlocks: logChunkBlocks,
           concurrency: rpcConcurrency,
         })
         for (const log of logs) {
@@ -998,7 +1020,7 @@ async function runChainWorkerBatch(
         const nativeFromBlock = nativeCheckpoint + 1
         const nativeToBlock = Math.min(
           finalized,
-          nativeFromBlock + normalScanBlocks - 1,
+          nativeFromBlock + Math.max(1_000, normalScanBlocks) - 1,
         )
         const nativeBlocks = await nativeTransfers(
           rpcPool,
@@ -1441,7 +1463,7 @@ async function runChainWorkerLocked(
   let rpcFailovers = 0
 
   while (batches < maxBatches && Date.now() - startedAt < maxRuntimeMs) {
-    const batch = await runChainWorkerBatch(batches === 0, report)
+    const batch = await runChainWorkerBatch(true, report)
     firstBatch ??= batch
     lastBatch = batch
     batches += 1

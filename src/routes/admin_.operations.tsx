@@ -301,8 +301,8 @@ function OperationsPage() {
                 name="safetyOffset"
                 type="number"
                 min="2"
-                max="100"
-                defaultValue="10"
+                max="200"
+                defaultValue="200"
                 className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2.5"
               />
             </label>
