@@ -8,8 +8,8 @@ import {
   zeroPadValue,
 } from 'ethers'
 import type { Filter, Log } from 'ethers'
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
-import { getDb } from '#/db'
+import { and, eq, inArray, isNull, sql, lte } from 'drizzle-orm'
+import { getDb, getPool } from '#/db'
 import { hasSufficientHotGas, scannerBlockRanges } from '#/domain/chain-worker'
 import { classifyDepositTransfer } from '#/domain/deposit-transfer'
 import {
@@ -77,6 +77,7 @@ async function retry<T>(operation: () => Promise<T>, attempts = 3) {
     try {
       return await operation()
     } catch (cause) {
+      if (String(cause).includes('LOG_RANGE_LIMIT')) throw cause
       lastCause = cause
       if (attempt < attempts) await wait(250 * 2 ** (attempt - 1))
     }
@@ -104,7 +105,7 @@ async function mapConcurrent<T, TResult>(
   return output
 }
 
-async function chunkedLogs(input: {
+export async function chunkedLogs(input: {
   rpcPool: RpcPool
   filter: Filter
   fromBlock: number
@@ -118,19 +119,48 @@ async function chunkedLogs(input: {
     input.toBlock,
     input.chunkBlocks,
   )
-  const groups = await mapConcurrent(ranges, input.concurrency, (range) =>
-    retry(() =>
-      input.rpcPool.run(
-        ({ provider }) =>
-          provider.getLogs({
-            ...input.filter,
-            fromBlock: range.fromBlock,
-            toBlock: range.toBlock,
-          }),
-        { cost: RPC_COST.getLogs },
-      ),
-    ),
-  )
+  async function query(range: {
+    fromBlock: number
+    toBlock: number
+  }): Promise<Array<Log>> {
+    try {
+      return await retry(() =>
+        input.rpcPool.run(
+          async ({ provider }) => {
+            try {
+              return await provider.getLogs({ ...input.filter, ...range })
+            } catch (error) {
+              if (
+                /block range|too many results|response size|query returned|limited to|maximum.*blocks/i.test(
+                  String(error),
+                )
+              )
+                throw new Error('LOG_RANGE_LIMIT', { cause: error })
+              throw error
+            }
+          },
+          { cost: RPC_COST.getLogs },
+        ),
+      )
+    } catch (error) {
+      if (
+        !String(error).includes('LOG_RANGE_LIMIT') ||
+        range.fromBlock === range.toBlock
+      )
+        throw error
+      const midpoint = Math.floor((range.fromBlock + range.toBlock) / 2)
+      const left = await query({
+        fromBlock: range.fromBlock,
+        toBlock: midpoint,
+      })
+      const right = await query({
+        fromBlock: midpoint + 1,
+        toBlock: range.toBlock,
+      })
+      return [...left, ...right]
+    }
+  }
+  const groups = await mapConcurrent(ranges, input.concurrency, query)
   return groups.flat()
 }
 
@@ -144,7 +174,7 @@ type RpcBlock = {
   }>
 }
 
-async function nativeTransfers(
+export async function nativeTransfers(
   rpcPool: RpcPool,
   fromBlock: number,
   toBlock: number,
@@ -197,7 +227,23 @@ async function nativeTransfers(
               cause.code = failure.error.code
               throw cause
             }
-            return payload.flatMap((item) => (item.result ? [item.result] : []))
+            const blocks = payload.flatMap((item) =>
+              item.result ? [item.result] : [],
+            )
+            const returned = new Set(
+              blocks.map((block) =>
+                block.number ? Number(BigInt(block.number)) : -1,
+              ),
+            )
+            if (
+              blocks.length !== batch.length ||
+              returned.size !== batch.length ||
+              batch.some((number) => !returned.has(number))
+            )
+              throw new Error(
+                'Native scan returned incomplete blocks; checkpoint retained',
+              )
+            return blocks
           },
           { cost: RPC_COST.nativeBlockBatch },
         )
@@ -221,7 +267,7 @@ async function finalizedBlock(rpcPool: RpcPool, head: number) {
   return Math.max(0, head - 2)
 }
 
-async function runChainWorkerBatch() {
+async function runChainWorkerBatch(scanNative = true) {
   const db = getDb()
   const settings = await db
     .select()
@@ -253,7 +299,7 @@ async function runChainWorkerBatch() {
     const finalized = Math.min(head, await finalizedBlock(rpcPool, head))
     const configuredStart = Number(process.env.BSC_START_BLOCK || 0)
     const configuredScanBlocks = Number(process.env.BSC_SCAN_BLOCKS || 50)
-    const scanBlocks = Number.isSafeInteger(configuredScanBlocks)
+    const normalScanBlocks = Number.isSafeInteger(configuredScanBlocks)
       ? Math.min(1_000, Math.max(1, configuredScanBlocks))
       : 50
     const configuredLogChunkBlocks = Number(
@@ -281,7 +327,14 @@ async function runChainWorkerBatch() {
         : Math.max(0, head - 20)
     // Public RPC endpoints commonly impose stricter eth_getLogs limits than
     // dedicated providers. A private provider can opt into a larger window.
-    const toBlock = Math.min(head, fromBlock + scanBlocks - 1)
+    const catchup = finalized - fromBlock > 1_000
+    const scanBlocks = catchup
+      ? Math.max(1_000, normalScanBlocks)
+      : normalScanBlocks
+    const toBlock = Math.min(finalized, fromBlock + scanBlocks - 1)
+    let nativeCheckpoint =
+      state?.lastNativeScannedBlock ?? state?.lastScannedBlock ?? fromBlock - 1
+    let nativeError = state?.lastNativeError ?? null
     const addressRows = await db
       .select()
       .from(walletAddresses)
@@ -626,7 +679,9 @@ async function runChainWorkerBatch() {
             },
             fromBlock,
             toBlock,
-            chunkBlocks: logChunkBlocks,
+            chunkBlocks: catchup
+              ? Math.max(100, logChunkBlocks)
+              : logChunkBlocks,
             concurrency: rpcConcurrency,
           })
           for (const log of logs) {
@@ -711,98 +766,6 @@ async function runChainWorkerBatch() {
               .then((rows) => rows.at(0))
             if (inserted) platformTransactions += 1
             if (inserted && relation.classification === 'DUST') dustIgnored += 1
-          }
-        }
-      }
-
-      {
-        const nativeBlocks = await nativeTransfers(
-          rpcPool,
-          fromBlock,
-          toBlock,
-          rpcConcurrency,
-        )
-        for (const block of nativeBlocks) {
-          const blockNumber = block.number ? Number(BigInt(block.number)) : null
-          for (const transaction of block.transactions ?? []) {
-            if (!transaction.to || BigInt(transaction.value) <= 0n) continue
-            const fromWallet = managedWalletRows.find(
-              (wallet) =>
-                wallet.address.toLowerCase() === transaction.from.toLowerCase(),
-            )
-            const toWallet = managedWalletRows.find(
-              (wallet) =>
-                wallet.address.toLowerCase() === transaction.to!.toLowerCase(),
-            )
-            for (const match of [
-              fromWallet
-                ? { wallet: fromWallet, direction: 'OUTGOING' as const }
-                : null,
-              toWallet
-                ? { wallet: toWallet, direction: 'INCOMING' as const }
-                : null,
-            ].filter((item): item is NonNullable<typeof item> =>
-              Boolean(item),
-            )) {
-              const knownGasSweep = knownSweeps.find(
-                (sweep) =>
-                  sweep.gasTxHash?.toLowerCase() ===
-                  transaction.hash.toLowerCase(),
-              )
-              const knownControlledTransfer = controlledTransferByHash.get(
-                transaction.hash.toLowerCase(),
-              )
-              const knownGasRecovery = gasRecoveryByHash.get(
-                transaction.hash.toLowerCase(),
-              )
-              const classification = knownGasSweep
-                ? 'SWEEP_GAS'
-                : knownControlledTransfer
-                  ? 'CONTROLLED_WALLET_TRANSFER'
-                  : knownGasRecovery
-                    ? 'DEPOSIT_GAS_RECOVERY'
-                    : match.direction === 'INCOMING' &&
-                        match.wallet.role === 'SWEEP_GAS'
-                      ? 'GAS_TOP_UP'
-                      : null
-              const inserted = await db
-                .insert(platformWalletTransactions)
-                .values({
-                  platformWalletId: match.wallet.id,
-                  eventKey: `${settings.chainId}:${match.wallet.role}:${transaction.hash.toLowerCase()}:native`,
-                  chainId: settings.chainId,
-                  txHash: transaction.hash,
-                  blockNumber,
-                  direction: match.direction,
-                  asset: 'BNB',
-                  amount: formatUnits(BigInt(transaction.value), 18),
-                  fromAddress: transaction.from,
-                  toAddress: transaction.to,
-                  status:
-                    blockNumber !== null && blockNumber <= finalized
-                      ? 'CONFIRMED'
-                      : 'PENDING',
-                  confirmations:
-                    blockNumber === null ? 0 : head - blockNumber + 1,
-                  classification,
-                  relatedType: knownGasSweep
-                    ? 'wallet_sweep'
-                    : knownControlledTransfer
-                      ? 'controlled_wallet_transfer'
-                      : knownGasRecovery
-                        ? 'deposit_gas_recovery'
-                        : null,
-                  relatedId:
-                    knownGasSweep?.id ??
-                    knownControlledTransfer?.id ??
-                    knownGasRecovery?.id ??
-                    null,
-                })
-                .onConflictDoNothing()
-                .returning({ id: platformWalletTransactions.id })
-                .then((rows) => rows.at(0))
-              if (inserted) platformTransactions += 1
-            }
           }
         }
       }
@@ -897,7 +860,7 @@ async function runChainWorkerBatch() {
           },
           fromBlock,
           toBlock,
-          chunkBlocks: logChunkBlocks,
+          chunkBlocks: catchup ? Math.max(100, logChunkBlocks) : logChunkBlocks,
           concurrency: rpcConcurrency,
         })
         for (const log of logs) {
@@ -938,9 +901,30 @@ async function runChainWorkerBatch() {
             .onConflictDoNothing()
             .returning({ id: deposits.id })
             .then((rows) => rows.at(0))
-          if (inserted && disposition === 'CREDIT') {
-            await confirmDeposit(inserted.id)
-            credited += 1
+          if (disposition === 'CREDIT') {
+            const pending =
+              inserted ??
+              (await db
+                .select({ id: deposits.id })
+                .from(deposits)
+                .where(
+                  and(
+                    eq(deposits.chainId, settings.chainId),
+                    eq(
+                      deposits.tokenContractAddress,
+                      settings.tokenContractAddress.toLowerCase(),
+                    ),
+                    eq(deposits.txHash, log.transactionHash),
+                    eq(deposits.logIndex, log.index),
+                    eq(deposits.status, 'PENDING'),
+                  ),
+                )
+                .limit(1)
+                .then((rows) => rows.at(0)))
+            if (pending) {
+              await confirmDeposit(pending.id)
+              credited += 1
+            }
           }
           if (inserted && disposition === 'DUST') dustIgnored += 1
           await db
@@ -948,6 +932,133 @@ async function runChainWorkerBatch() {
             .set({ lastSeenAt: new Date(), updatedAt: new Date() })
             .where(eq(walletAddresses.id, walletAddress.id))
         }
+      }
+    }
+
+    // Recover events persisted before a previous credit transaction failed.
+    const pendingDeposits = await db
+      .select({ id: deposits.id })
+      .from(deposits)
+      .where(
+        and(
+          eq(deposits.status, 'PENDING'),
+          eq(deposits.source, 'AUTOMATIC'),
+          eq(deposits.chainId, settings.chainId),
+          eq(
+            deposits.tokenContractAddress,
+            settings.tokenContractAddress.toLowerCase(),
+          ),
+          lte(deposits.blockNumber, finalized),
+        ),
+      )
+      .limit(100)
+    for (const deposit of pendingDeposits) {
+      await confirmDeposit(deposit.id)
+      credited += 1
+    }
+
+    if (scanNative) {
+      try {
+        const nativeFromBlock = nativeCheckpoint + 1
+        const nativeToBlock = Math.min(
+          finalized,
+          nativeFromBlock + normalScanBlocks - 1,
+        )
+        const nativeBlocks = await nativeTransfers(
+          rpcPool,
+          nativeFromBlock,
+          nativeToBlock,
+          rpcConcurrency,
+        )
+        for (const block of nativeBlocks) {
+          const blockNumber = block.number ? Number(BigInt(block.number)) : null
+          for (const transaction of block.transactions ?? []) {
+            if (!transaction.to || BigInt(transaction.value) <= 0n) continue
+            const fromWallet = managedWalletRows.find(
+              (wallet) =>
+                wallet.address.toLowerCase() === transaction.from.toLowerCase(),
+            )
+            const toWallet = managedWalletRows.find(
+              (wallet) =>
+                wallet.address.toLowerCase() === transaction.to!.toLowerCase(),
+            )
+            for (const match of [
+              fromWallet
+                ? { wallet: fromWallet, direction: 'OUTGOING' as const }
+                : null,
+              toWallet
+                ? { wallet: toWallet, direction: 'INCOMING' as const }
+                : null,
+            ].filter((item): item is NonNullable<typeof item> =>
+              Boolean(item),
+            )) {
+              const knownGasSweep = knownSweeps.find(
+                (sweep) =>
+                  sweep.gasTxHash?.toLowerCase() ===
+                  transaction.hash.toLowerCase(),
+              )
+              const knownControlledTransfer = controlledTransferByHash.get(
+                transaction.hash.toLowerCase(),
+              )
+              const knownGasRecovery = gasRecoveryByHash.get(
+                transaction.hash.toLowerCase(),
+              )
+              const classification = knownGasSweep
+                ? 'SWEEP_GAS'
+                : knownControlledTransfer
+                  ? 'CONTROLLED_WALLET_TRANSFER'
+                  : knownGasRecovery
+                    ? 'DEPOSIT_GAS_RECOVERY'
+                    : match.direction === 'INCOMING' &&
+                        match.wallet.role === 'SWEEP_GAS'
+                      ? 'GAS_TOP_UP'
+                      : null
+              const inserted = await db
+                .insert(platformWalletTransactions)
+                .values({
+                  platformWalletId: match.wallet.id,
+                  eventKey: `${settings.chainId}:${match.wallet.role}:${transaction.hash.toLowerCase()}:native`,
+                  chainId: settings.chainId,
+                  txHash: transaction.hash,
+                  blockNumber,
+                  direction: match.direction,
+                  asset: 'BNB',
+                  amount: formatUnits(BigInt(transaction.value), 18),
+                  fromAddress: transaction.from,
+                  toAddress: transaction.to,
+                  status:
+                    blockNumber !== null && blockNumber <= finalized
+                      ? 'CONFIRMED'
+                      : 'PENDING',
+                  confirmations:
+                    blockNumber === null ? 0 : head - blockNumber + 1,
+                  classification,
+                  relatedType: knownGasSweep
+                    ? 'wallet_sweep'
+                    : knownControlledTransfer
+                      ? 'controlled_wallet_transfer'
+                      : knownGasRecovery
+                        ? 'deposit_gas_recovery'
+                        : null,
+                  relatedId:
+                    knownGasSweep?.id ??
+                    knownControlledTransfer?.id ??
+                    knownGasRecovery?.id ??
+                    null,
+                })
+                .onConflictDoNothing()
+                .returning({ id: platformWalletTransactions.id })
+                .then((rows) => rows.at(0))
+              if (inserted) platformTransactions += 1
+            }
+          }
+        }
+        nativeCheckpoint = Math.max(nativeCheckpoint, nativeToBlock)
+        nativeError = null
+      } catch {
+        nativeError =
+          'Native history scan failed; checkpoint retained for retry'
+        console.error('Native scan deferred; deposit scan will continue')
       }
     }
 
@@ -1212,7 +1323,9 @@ async function runChainWorkerBatch() {
       .values({
         id: 1,
         chainId: settings.chainId,
-        lastScannedBlock: toBlock,
+        lastScannedBlock: Math.max(state?.lastScannedBlock ?? 0, toBlock),
+        lastNativeScannedBlock: nativeCheckpoint,
+        lastNativeError: nativeError,
         lastHeadBlock: head,
         lastRunAt: new Date(),
         lastError: null,
@@ -1224,7 +1337,9 @@ async function runChainWorkerBatch() {
       .onConflictDoUpdate({
         target: chainWatcherState.id,
         set: {
-          lastScannedBlock: toBlock,
+          lastScannedBlock: Math.max(state?.lastScannedBlock ?? 0, toBlock),
+          lastNativeScannedBlock: nativeCheckpoint,
+          lastNativeError: nativeError,
           lastHeadBlock: head,
           lastRunAt: new Date(),
           lastError: null,
@@ -1256,17 +1371,17 @@ async function runChainWorkerBatch() {
   }
 }
 
-export async function runChainWorker() {
+async function runChainWorkerLocked() {
   const configuredMaxBatches = Number(process.env.BSC_CATCHUP_MAX_BATCHES || 10)
   const maxBatches = Number.isSafeInteger(configuredMaxBatches)
     ? Math.min(50, Math.max(1, configuredMaxBatches))
     : 10
   const configuredMaxRuntimeMs = Number(
-    process.env.BSC_CATCHUP_MAX_RUNTIME_MS || 55_000,
+    process.env.BSC_CATCHUP_MAX_RUNTIME_MS || 240_000,
   )
   const maxRuntimeMs = Number.isFinite(configuredMaxRuntimeMs)
     ? Math.min(5 * 60_000, Math.max(5_000, configuredMaxRuntimeMs))
-    : 55_000
+    : 240_000
   const startedAt = Date.now()
   let firstBatch: Awaited<ReturnType<typeof runChainWorkerBatch>> | null = null
   let lastBatch: Awaited<ReturnType<typeof runChainWorkerBatch>> | null = null
@@ -1281,7 +1396,7 @@ export async function runChainWorker() {
   let rpcFailovers = 0
 
   while (batches < maxBatches && Date.now() - startedAt < maxRuntimeMs) {
-    const batch = await runChainWorkerBatch()
+    const batch = await runChainWorkerBatch(batches === 0)
     firstBatch ??= batch
     lastBatch = batch
     batches += 1
@@ -1312,5 +1427,24 @@ export async function runChainWorker() {
     dustIgnored,
     rpcFailovers,
     runtimeMs: Date.now() - startedAt,
+  }
+}
+
+export async function runChainWorker() {
+  const connection = await getPool().connect()
+  let locked = false
+  try {
+    const result = await connection.query<{ acquired: boolean }>(
+      'SELECT pg_try_advisory_lock(569001) AS acquired',
+    )
+    locked = result.rows[0]?.acquired === true
+    if (!locked) throw new Error('Another chain scanner is already running')
+    return await runChainWorkerLocked()
+  } finally {
+    try {
+      if (locked) await connection.query('SELECT pg_advisory_unlock(569001)')
+    } finally {
+      connection.release()
+    }
   }
 }

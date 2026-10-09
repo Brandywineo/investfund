@@ -18,6 +18,8 @@ type RpcEndpoint = {
 export type RpcRequestOptions = {
   /** Approximate Alchemy throughput compute units consumed by the request. */
   cost?: number
+  /** Internal retry budget for endpoint failures (token waits do not consume it). */
+  failureRounds?: number
 }
 
 export type RpcPoolSnapshot = {
@@ -208,8 +210,11 @@ export class RpcPool {
 
     const delay = this.nextAvailableDelay(cost)
     if (delay > 0) {
+      const failureRounds = (options.failureRounds ?? 0) + (lastCause ? 1 : 0)
+      if (failureRounds >= 3)
+        throw lastCause ?? new Error('BSC RPC retry budget exhausted')
       await new Promise((resolve) => setTimeout(resolve, delay))
-      return this.run(operation, options)
+      return this.run(operation, { ...options, failureRounds })
     }
     throw lastCause ?? new Error('No healthy BSC RPC endpoint is available')
   }

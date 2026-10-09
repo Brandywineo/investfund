@@ -1029,6 +1029,10 @@ export const chainWatcherState = pgTable('chain_watcher_state', {
   id: integer('id').primaryKey().default(1),
   chainId: integer('chain_id').notNull(),
   lastScannedBlock: bigint('last_scanned_block', { mode: 'number' }).notNull(),
+  lastNativeScannedBlock: bigint('last_native_scanned_block', {
+    mode: 'number',
+  }),
+  lastNativeError: text('last_native_error'),
   lastHeadBlock: bigint('last_head_block', { mode: 'number' }),
   lastRunAt: timestamp('last_run_at', { withTimezone: true }),
   lastError: text('last_error'),
