@@ -11,6 +11,8 @@ type RpcEndpoint = {
   provider: JsonRpcProvider
   cooldownUntil: number
   disabled: boolean
+  inFlight: boolean
+  transientFailures: number
   availableTokens: number
   lastRefillAt: number
   rateMultiplier: number
@@ -32,6 +34,9 @@ export type RpcPoolSnapshot = {
   activeHostname: string
   lastFailoverAt: Date | null
 }
+
+// Retain temporary endpoint quarantine across batches within this worker process.
+const endpointCooldowns = new Map<string, number>()
 
 export class RpcPool {
   private diagnostics = new Map<string, RpcDiagnostic>()
@@ -69,8 +74,10 @@ export class RpcPool {
       provider: new JsonRpcProvider(url, input.chainId, {
         staticNetwork: true,
       }),
-      cooldownUntil: 0,
+      cooldownUntil: endpointCooldowns.get(url) ?? 0,
       disabled: false,
+      inFlight: false,
+      transientFailures: 0,
       availableTokens: this.burstCapacity,
       lastRefillAt: now,
       rateMultiplier: 1,
@@ -156,7 +163,7 @@ export class RpcPool {
           (this.targetCuPerSecond * endpoint.rateMultiplier)) *
           1_000,
       )
-      return [Math.max(cooldownDelay, tokenDelay)]
+      return [Math.max(cooldownDelay, tokenDelay, endpoint.inFlight ? 50 : 0)]
     })
     return delays.length ? Math.max(10, Math.min(...delays)) : 0
   }
@@ -174,12 +181,16 @@ export class RpcPool {
       Math.max(1, Number(options.cost ?? 10)),
     )
     let lastCause: unknown
-    const attempted = new Set<number>()
     for (const index of this.candidateIndexes()) {
       const endpoint = this.endpoints[index]
-      if (endpoint.disabled || endpoint.cooldownUntil > Date.now()) continue
+      if (
+        endpoint.disabled ||
+        endpoint.inFlight ||
+        endpoint.cooldownUntil > Date.now()
+      )
+        continue
       if (!this.reserve(endpoint, cost)) continue
-      attempted.add(index)
+      endpoint.inFlight = true
       const startedAt = Date.now()
       const method = /^eth_[a-zA-Z]+$/.test(options.method ?? '')
         ? options.method!
@@ -218,10 +229,12 @@ export class RpcPool {
           index,
         )
         record('SUCCESS')
+        endpoint.transientFailures = 0
         // Successful requests rotate fairly so all configured accounts share
         // the work before any single account approaches its rolling limit.
         this.activeIndex = (index + 1) % this.endpoints.length
         endpoint.cooldownUntil = 0
+        endpointCooldowns.delete(endpoint.url)
         endpoint.rateMultiplier = Math.min(1, endpoint.rateMultiplier + 0.02)
         return result
       } catch (cause) {
@@ -243,13 +256,32 @@ export class RpcPool {
               0.25,
               endpoint.rateMultiplier * 0.7,
             )
-          endpoint.cooldownUntil = Date.now() + this.cooldownMs
+          if (category === 'TRANSIENT') endpoint.transientFailures += 1
+          endpoint.cooldownUntil =
+            Date.now() +
+            (category === 'TRANSIENT'
+              ? Math.max(
+                  this.cooldownMs,
+                  Math.min(
+                    15 * 60_000,
+                    5 * 60_000 * endpoint.transientFailures,
+                  ),
+                )
+              : this.cooldownMs)
         }
+        endpointCooldowns.set(endpoint.url, endpoint.cooldownUntil)
         this.rotate(index)
+      } finally {
+        endpoint.inFlight = false
       }
     }
 
     const delay = this.nextAvailableDelay(cost)
+    if (delay > 30_000)
+      throw (
+        lastCause ??
+        new Error('All BSC RPC endpoints are temporarily quarantined')
+      )
     if (delay > 0) {
       const failureRounds = (options.failureRounds ?? 0) + (lastCause ? 1 : 0)
       if (failureRounds >= 3)

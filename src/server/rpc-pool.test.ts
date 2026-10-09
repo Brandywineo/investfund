@@ -5,7 +5,7 @@ describe('RPC pool request deadlines', () => {
   it('fails over when an endpoint never returns', async () => {
     const pool = new RpcPool({
       chainId: 56,
-      urls: ['https://rpc-one.invalid', 'https://rpc-two.invalid'],
+      urls: ['https://timeout-one.invalid', 'https://timeout-two.invalid'],
       cooldownMs: 1_000,
       requestTimeoutMs: 1_000,
     })
@@ -117,5 +117,60 @@ it('distinguishes adaptive query limits from ordinary permanent errors', async (
   } finally {
     pool.destroy()
     warning.mockRestore()
+  }
+})
+
+it('quarantines a transient failure across requests and replacement pools', async () => {
+  const urls = [
+    'https://quarantine-one.invalid',
+    'https://quarantine-two.invalid',
+  ]
+  const pool = new RpcPool({ chainId: 56, urls })
+  const attempted: number[] = []
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  try {
+    await pool.run(async ({ index }) => {
+      attempted.push(index)
+      if (index === 0) throw new Error('socket disconnected')
+      return 'ok'
+    })
+    for (let i = 0; i < 5; i += 1)
+      await pool.run(async ({ index }) => {
+        attempted.push(index)
+        return 'ok'
+      })
+    expect(attempted.filter((index) => index === 0)).toHaveLength(1)
+    const replacement = new RpcPool({ chainId: 56, urls })
+    try {
+      const selected = await replacement.run(async ({ index }) => index)
+      expect(selected).toBe(1)
+    } finally {
+      replacement.destroy()
+    }
+  } finally {
+    pool.destroy()
+    warning.mockRestore()
+  }
+})
+
+it('does not send concurrent requests to an already busy endpoint', async () => {
+  const pool = new RpcPool({
+    chainId: 56,
+    urls: ['https://busy-one.invalid', 'https://busy-two.invalid'],
+  })
+  let release!: (value: string) => void
+  try {
+    const first = pool.run(
+      () =>
+        new Promise<string>((resolve) => {
+          release = resolve
+        }),
+    )
+    const second = await pool.run(async ({ index }) => index)
+    expect(second).toBe(1)
+    release('done')
+    expect(await first).toBe('done')
+  } finally {
+    pool.destroy()
   }
 })
