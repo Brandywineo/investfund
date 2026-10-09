@@ -1,3 +1,4 @@
+import type { ScannerDiagnostics } from '#/domain/scanner-diagnostics'
 import {
   Contract,
   Interface,
@@ -139,7 +140,7 @@ export async function chunkedLogs(input: {
               throw error
             }
           },
-          { cost: RPC_COST.getLogs },
+          { cost: RPC_COST.getLogs, method: 'eth_getLogs' },
         ),
       )
     } catch (error) {
@@ -245,7 +246,7 @@ export async function nativeTransfers(
               )
             return blocks
           },
-          { cost: RPC_COST.nativeBlockBatch },
+          { cost: RPC_COST.nativeBlockBatch, method: 'eth_getBlockByNumber' },
         )
       }),
   )
@@ -259,6 +260,7 @@ async function finalizedBlock(rpcPool: RpcPool, head: number) {
         provider.send('eth_getBlockByNumber', ['finalized', false]) as Promise<{
           number?: string
         } | null>,
+      { method: 'eth_getBlockByNumber' },
     )
     if (block?.number) return Number(BigInt(block.number))
   } catch {
@@ -267,7 +269,10 @@ async function finalizedBlock(rpcPool: RpcPool, head: number) {
   return Math.max(0, head - 2)
 }
 
-async function runChainWorkerBatch(scanNative = true) {
+async function runChainWorkerBatch(
+  scanNative = true,
+  report?: (diagnostics: ScannerDiagnostics) => void,
+) {
   const db = getDb()
   const settings = await db
     .select()
@@ -291,11 +296,25 @@ async function runChainWorkerBatch(scanNative = true) {
     chainId: settings.chainId,
     startIndex: state?.activeRpcIndex ?? 0,
   })
+  let usdtMs = 0
+  let nativeMs = 0
+  let phaseStartedAt = 0
+  let phase: 'usdt' | 'native' | null = null
+  const finishPhase = () => {
+    if (phase === 'usdt') usdtMs += Date.now() - phaseStartedAt
+    if (phase === 'native') nativeMs += Date.now() - phaseStartedAt
+    phase = null
+  }
   try {
-    const network = await rpcPool.run(({ provider }) => provider.getNetwork())
+    const network = await rpcPool.run(({ provider }) => provider.getNetwork(), {
+      method: 'eth_chainId',
+    })
     if (Number(network.chainId) !== settings.chainId)
       throw new Error('RPC chain ID does not match custody settings')
-    const head = await rpcPool.run(({ provider }) => provider.getBlockNumber())
+    const head = await rpcPool.run(
+      ({ provider }) => provider.getBlockNumber(),
+      { method: 'eth_blockNumber' },
+    )
     const finalized = Math.min(head, await finalizedBlock(rpcPool, head))
     const configuredStart = Number(process.env.BSC_START_BLOCK || 0)
     const configuredScanBlocks = Number(process.env.BSC_SCAN_BLOCKS || 50)
@@ -343,12 +362,14 @@ async function runChainWorkerBatch(scanNative = true) {
       addressRows.map((row) => [row.address.toLowerCase(), row]),
     )
     const decimals = Number(
-      await rpcPool.run(({ provider }) =>
-        new Contract(
-          settings.tokenContractAddress!,
-          TOKEN_ABI,
-          provider,
-        ).decimals(),
+      await rpcPool.run(
+        ({ provider }) =>
+          new Contract(
+            settings.tokenContractAddress!,
+            TOKEN_ABI,
+            provider,
+          ).decimals(),
+        { method: 'eth_call' },
       ),
     )
     const tokenBalanceOf = (address: string) =>
@@ -359,13 +380,20 @@ async function runChainWorkerBatch(scanNative = true) {
             TOKEN_ABI,
             provider,
           ).balanceOf(address) as Promise<bigint>,
+        { method: 'eth_call' },
       )
     const nativeBalanceOf = (address: string) =>
-      rpcPool.run(({ provider }) => provider.getBalance(address))
+      rpcPool.run(({ provider }) => provider.getBalance(address), {
+        method: 'eth_getBalance',
+      })
     const transactionReceipt = (txHash: string) =>
-      rpcPool.run(({ provider }) => provider.getTransactionReceipt(txHash))
+      rpcPool.run(({ provider }) => provider.getTransactionReceipt(txHash), {
+        method: 'eth_getTransactionReceipt',
+      })
     const transactionByHash = (txHash: string) =>
-      rpcPool.run(({ provider }) => provider.getTransaction(txHash))
+      rpcPool.run(({ provider }) => provider.getTransaction(txHash), {
+        method: 'eth_getTransactionByHash',
+      })
     const settleTreasuryAttempts = async (
       transferId: string,
       currentTxHash: string,
@@ -656,6 +684,8 @@ async function runChainWorkerBatch(scanNative = true) {
     let platformTransactions = 0
     let dustIgnored = 0
 
+    phase = 'usdt'
+    phaseStartedAt = Date.now()
     if (fromBlock <= toBlock) {
       const platformWalletByAddress = new Map(
         managedWalletRows.map((wallet) => [
@@ -771,6 +801,7 @@ async function runChainWorkerBatch(scanNative = true) {
       }
     }
 
+    finishPhase()
     const gasWalletRow = managedWalletRows.find(
       (wallet) => wallet.role === 'SWEEP_GAS',
     )
@@ -842,6 +873,8 @@ async function runChainWorkerBatch(scanNative = true) {
       )
     }
 
+    phase = 'usdt'
+    phaseStartedAt = Date.now()
     if (fromBlock <= toBlock && addressRows.length > 0) {
       // Some public BSC nodes reject OR filters containing multiple recipient
       // topics. Query one address at a time by default; private RPCs can opt in
@@ -957,7 +990,10 @@ async function runChainWorkerBatch(scanNative = true) {
       credited += 1
     }
 
+    finishPhase()
     if (scanNative) {
+      phase = 'native'
+      phaseStartedAt = Date.now()
       try {
         const nativeFromBlock = nativeCheckpoint + 1
         const nativeToBlock = Math.min(
@@ -1062,6 +1098,7 @@ async function runChainWorkerBatch(scanNative = true) {
       }
     }
 
+    finishPhase()
     const staleBefore = Date.now() - maintenanceIntervalMs
     const balanceRows = addressRows
       .filter(
@@ -1367,11 +1404,19 @@ async function runChainWorkerBatch(scanNative = true) {
       rpcFailovers: rpcSnapshot.failovers,
     }
   } finally {
+    finishPhase()
+    const diagnostics = { usdtMs, nativeMs, ...rpcPool.diagnosticSnapshot() }
+    console.log(
+      JSON.stringify({ event: 'scanner_batch_diagnostics', ...diagnostics }),
+    )
+    report?.(diagnostics)
     rpcPool.destroy()
   }
 }
 
-async function runChainWorkerLocked() {
+async function runChainWorkerLocked(
+  report?: (diagnostics: ScannerDiagnostics) => void,
+) {
   const configuredMaxBatches = Number(process.env.BSC_CATCHUP_MAX_BATCHES || 10)
   const maxBatches = Number.isSafeInteger(configuredMaxBatches)
     ? Math.min(50, Math.max(1, configuredMaxBatches))
@@ -1396,7 +1441,7 @@ async function runChainWorkerLocked() {
   let rpcFailovers = 0
 
   while (batches < maxBatches && Date.now() - startedAt < maxRuntimeMs) {
-    const batch = await runChainWorkerBatch(batches === 0)
+    const batch = await runChainWorkerBatch(batches === 0, report)
     firstBatch ??= batch
     lastBatch = batch
     batches += 1
@@ -1430,7 +1475,9 @@ async function runChainWorkerLocked() {
   }
 }
 
-export async function runChainWorker() {
+export async function runChainWorker(
+  report?: (diagnostics: ScannerDiagnostics) => void,
+) {
   const connection = await getPool().connect()
   let locked = false
   try {
@@ -1439,7 +1486,7 @@ export async function runChainWorker() {
     )
     locked = result.rows[0]?.acquired === true
     if (!locked) throw new Error('Another chain scanner is already running')
-    return await runChainWorkerLocked()
+    return await runChainWorkerLocked(report)
   } finally {
     try {
       if (locked) await connection.query('SELECT pg_advisory_unlock(569001)')

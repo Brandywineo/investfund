@@ -1,3 +1,4 @@
+import type { ScannerDiagnostics } from '../src/domain/scanner-diagnostics'
 import { eq } from 'drizzle-orm'
 import { closePool, getDb } from '../src/db'
 import { chainWatcherState, chainWorkerRuns } from '../src/db/schema'
@@ -14,13 +15,15 @@ function safeError(cause: unknown) {
 
 const startedAt = new Date()
 let exitCode = 0
+const diagnostics: Array<ScannerDiagnostics> = []
 
 try {
-  const result = await runChainWorker()
+  const result = await runChainWorker((batch) => diagnostics.push(batch))
   await getDb()
     .insert(chainWorkerRuns)
     .values({
       status: 'SUCCESS',
+      diagnostics,
       fromBlock: result.fromBlock,
       toBlock: result.toBlock,
       headBlock: result.head,
@@ -45,7 +48,7 @@ try {
     .catch(() => undefined)
   await getDb()
     .insert(chainWorkerRuns)
-    .values({ status: 'FAILED', error: message, startedAt })
+    .values({ status: 'FAILED', error: message, startedAt, diagnostics })
     .catch(() => undefined)
   await evaluateOperationalHealth().catch(() => undefined)
   exitCode = 1

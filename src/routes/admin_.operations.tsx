@@ -167,6 +167,7 @@ function OperationsPage() {
                     <th className="pb-3">Lag</th>
                     <th className="pb-3">Runtime</th>
                     <th className="pb-3">Failovers</th>
+                    <th className="pb-3">Diagnostics</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -189,6 +190,60 @@ function OperationsPage() {
                           : '—'}
                       </td>
                       <td className="py-3">{run.rpcFailovers}</td>
+                      <td className="py-3">
+                        {run.diagnostics?.length ? (
+                          <details>
+                            <summary className="cursor-pointer">
+                              View breakdown
+                            </summary>
+                            <p className="mt-2">
+                              USDT:{' '}
+                              {(
+                                run.diagnostics.reduce(
+                                  (sum, batch) => sum + batch.usdtMs,
+                                  0,
+                                ) / 1000
+                              ).toFixed(1)}
+                              s · BNB:{' '}
+                              {(
+                                run.diagnostics.reduce(
+                                  (sum, batch) => sum + batch.nativeMs,
+                                  0,
+                                ) / 1000
+                              ).toFixed(1)}
+                              s
+                            </p>
+                            <p className="text-xs">
+                              RPC waits:{' '}
+                              {(
+                                run.diagnostics.reduce(
+                                  (sum, batch) => sum + batch.rpcWaitMs,
+                                  0,
+                                ) / 1000
+                              ).toFixed(1)}
+                              s across requests; parallel waits can overlap.
+                            </p>
+                            {run.diagnostics.map((batch, index) => (
+                              <div key={index} className="mt-3">
+                                <p className="font-semibold">
+                                  Batch {index + 1}
+                                </p>
+                                {batch.requests.map((request, row) => (
+                                  <p key={row} className="mt-1 text-xs">
+                                    #{request.endpoint} {request.hostname} ·{' '}
+                                    {request.method} · {request.category} ·{' '}
+                                    {request.count} requests ·{' '}
+                                    {(request.durationMs / 1000).toFixed(1)}s
+                                    total
+                                  </p>
+                                ))}
+                              </div>
+                            ))}
+                          </details>
+                        ) : (
+                          'Not recorded'
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

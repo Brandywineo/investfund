@@ -1,4 +1,5 @@
 import { JsonRpcProvider } from 'ethers'
+import type { RpcDiagnostic } from '#/domain/scanner-diagnostics'
 import {
   configuredRpcUrls,
   rpcFailureCategory,
@@ -17,6 +18,7 @@ type RpcEndpoint = {
 
 export type RpcRequestOptions = {
   /** Approximate Alchemy throughput compute units consumed by the request. */
+  method?: string
   cost?: number
   /** Internal retry budget for endpoint failures (token waits do not consume it). */
   failureRounds?: number
@@ -32,6 +34,8 @@ export type RpcPoolSnapshot = {
 }
 
 export class RpcPool {
+  private diagnostics = new Map<string, RpcDiagnostic>()
+  private waitMs = 0
   private endpoints: Array<RpcEndpoint>
   private activeIndex: number
   private failovers = 0
@@ -176,6 +180,34 @@ export class RpcPool {
       if (endpoint.disabled || endpoint.cooldownUntil > Date.now()) continue
       if (!this.reserve(endpoint, cost)) continue
       attempted.add(index)
+      const startedAt = Date.now()
+      const method = /^eth_[a-zA-Z]+$/.test(options.method ?? '')
+        ? options.method!
+        : 'unspecified'
+      const record = (category: string) => {
+        const durationMs = Date.now() - startedAt
+        const key = `${index}:${method}:${category}`
+        const previous = this.diagnostics.get(key)
+        this.diagnostics.set(key, {
+          endpoint: index + 1,
+          hostname: sanitizedRpcHostname(endpoint.url),
+          method,
+          category,
+          count: (previous?.count ?? 0) + 1,
+          durationMs: (previous?.durationMs ?? 0) + durationMs,
+        })
+        if (category !== 'SUCCESS')
+          console.warn(
+            JSON.stringify({
+              event: 'scanner_rpc_failure',
+              endpoint: index + 1,
+              hostname: sanitizedRpcHostname(endpoint.url),
+              method,
+              category,
+              durationMs,
+            }),
+          )
+      }
       try {
         const result = await this.withTimeout(
           operation({
@@ -185,6 +217,7 @@ export class RpcPool {
           }),
           index,
         )
+        record('SUCCESS')
         // Successful requests rotate fairly so all configured accounts share
         // the work before any single account approaches its rolling limit.
         this.activeIndex = (index + 1) % this.endpoints.length
@@ -194,6 +227,14 @@ export class RpcPool {
       } catch (cause) {
         lastCause = cause
         const category = rpcFailureCategory(cause)
+        const message = String(cause)
+        record(
+          message.includes('LOG_RANGE_LIMIT')
+            ? 'QUERY_LIMIT'
+            : /timed out|timeout/i.test(message)
+              ? 'TIMEOUT'
+              : category,
+        )
         if (category === 'PERMANENT') throw cause
         if (category === 'AUTHENTICATION') endpoint.disabled = true
         else {
@@ -213,10 +254,19 @@ export class RpcPool {
       const failureRounds = (options.failureRounds ?? 0) + (lastCause ? 1 : 0)
       if (failureRounds >= 3)
         throw lastCause ?? new Error('BSC RPC retry budget exhausted')
+      const waitStartedAt = Date.now()
       await new Promise((resolve) => setTimeout(resolve, delay))
+      this.waitMs += Date.now() - waitStartedAt
       return this.run(operation, { ...options, failureRounds })
     }
     throw lastCause ?? new Error('No healthy BSC RPC endpoint is available')
+  }
+
+  diagnosticSnapshot() {
+    return {
+      rpcWaitMs: this.waitMs,
+      requests: [...this.diagnostics.values()].map((row) => ({ ...row })),
+    }
   }
 
   destroy() {
