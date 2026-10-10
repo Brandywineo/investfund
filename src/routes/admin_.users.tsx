@@ -154,6 +154,13 @@ function UsersPage() {
                   <td className="p-5">
                     <b className="block">{user.displayName}</b>
                     <span className="text-xs text-[#6e857a]">{user.email}</span>
+                    <Link
+                      to="/admin/support"
+                      search={{ userId: user.id }}
+                      className="mt-2 block text-xs font-bold text-[#123d2d]"
+                    >
+                      Message user
+                    </Link>
                   </td>
                   <td className="text-sm text-[#6e857a]">
                     {new Date(user.createdAt).toISOString().slice(0, 10)}

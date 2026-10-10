@@ -79,6 +79,7 @@ function Home() {
             <Link to="/referrals">Referrals</Link>
             <Link to="/trading">Trading</Link>
             <Link to="/community">Community</Link>
+            <Link to="/support">Help &amp; Support</Link>
             <Link to="/ledger">Ledger</Link>
             <Link to="/account">Account</Link>
             {user.role === 'ADMIN' ? <Link to="/admin">Admin</Link> : null}

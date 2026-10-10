@@ -15,6 +15,13 @@ import {
   reportCommunityMessage,
   sendCommunityMessage,
 } from './community.functions'
+import {
+  getSupportInbox,
+  getSupportConversation,
+  markSupportRead,
+  sendSupportMessage,
+} from './support-chat.functions'
+import { eq } from 'drizzle-orm'
 import { getCommunityImageResponse } from './community-image.service'
 import { listUsers } from './admin-users.functions'
 import { getAdminWithdrawals } from './custody.functions'
@@ -362,5 +369,142 @@ describe('admin current balances', () => {
     )!
     expect(request.userBalance.total).toBe(user.totalBalance)
     expect(request.userBalance.reserved).toBe('100.13')
+  })
+})
+
+describe('private support PostgreSQL handlers', () => {
+  const requestId = randomUUID()
+  const replyId = randomUUID()
+  it('lets an admin initiate a private conversation and notifies only its owner', async () => {
+    signIn(adminId, 'ADMIN')
+    await sendSupportMessage({
+      data: {
+        userId: memberId,
+        requestId,
+        body: 'Hello. Please check your email, including Spam/Junk, and reply here for help.',
+      },
+    })
+    const messages = await state.db.select().from(schema.supportMessages)
+    expect(messages).toHaveLength(1)
+    expect(messages[0].fromAdmin).toBe(true)
+    const alerts = (await state.db.select().from(schema.notifications)).filter(
+      (item) => item.eventKey.startsWith(`support:${requestId}:`),
+    )
+    expect(alerts.map((item) => item.userId)).toEqual([memberId])
+    expect(alerts[0].href).toBe('/support')
+    expect(alerts[0].body).not.toContain('Spam')
+    const inbox = await getSupportInbox()
+    expect(inbox.find((item) => item.userId === memberId)?.unread).toBe(0)
+  })
+  it('retries the same send exactly once and rejects conflicting request IDs', async () => {
+    signIn(adminId, 'ADMIN')
+    await sendSupportMessage({
+      data: {
+        userId: memberId,
+        requestId,
+        body: 'Hello. Please check your email, including Spam/Junk, and reply here for help.',
+      },
+    })
+    expect(await state.db.select().from(schema.supportMessages)).toHaveLength(1)
+    await expect(
+      sendSupportMessage({
+        data: { userId: memberId, requestId, body: 'Different body' },
+      }),
+    ).rejects.toThrow('conflict')
+  })
+  it('prevents another user or manager from reading, writing or marking the conversation read', async () => {
+    signIn(managerId, 'MANAGER')
+    await expect(
+      getSupportConversation({ data: { userId: memberId } }),
+    ).rejects.toThrow('access denied')
+    await expect(
+      sendSupportMessage({
+        data: {
+          userId: memberId,
+          requestId: randomUUID(),
+          body: 'Unauthorized',
+        },
+      }),
+    ).rejects.toThrow('access denied')
+    await expect(
+      markSupportRead({ data: { userId: memberId, messageId: requestId } }),
+    ).rejects.toThrow('access denied')
+    await expect(getSupportInbox()).rejects.toThrow('Administrator')
+    expect((await getSupportConversation({ data: {} })).messages).toHaveLength(
+      0,
+    )
+  })
+  it('lets the owner read and reply, creates admin notifications and tracks unread replies', async () => {
+    signIn(memberId, 'USER')
+    const conversation = await getSupportConversation({ data: {} })
+    expect(conversation.messages.map((item) => item.id)).toEqual([requestId])
+    await markSupportRead({ data: { messageId: requestId } })
+    await sendSupportMessage({
+      data: { requestId: replyId, body: 'Thank you. I found the email.' },
+    })
+    signIn(adminId, 'ADMIN')
+    expect(
+      (await getSupportInbox()).find((item) => item.userId === memberId)
+        ?.unread,
+    ).toBe(1)
+    const alerts = (await state.db.select().from(schema.notifications)).filter(
+      (item) => item.eventKey.startsWith(`support:${replyId}:`),
+    )
+    expect(alerts.map((item) => item.userId)).toEqual([adminId])
+    expect(alerts[0].href).toBe(`/admin/support?userId=${memberId}`)
+    await markSupportRead({ data: { userId: memberId, messageId: replyId } })
+    expect(
+      (await getSupportInbox()).find((item) => item.userId === memberId)
+        ?.unread,
+    ).toBe(0)
+  })
+  it('limits rapid duplicate messages and rejects unauthenticated access', async () => {
+    signIn(memberId, 'USER')
+    await expect(
+      sendSupportMessage({
+        data: { requestId: randomUUID(), body: 'Repeated message' },
+      }),
+    ).rejects.toThrow('Wait')
+    state.user = null
+    await expect(getSupportConversation({ data: {} })).rejects.toThrow(
+      'Authentication',
+    )
+    await expect(
+      sendSupportMessage({
+        data: { requestId: randomUUID(), body: 'Anonymous' },
+      }),
+    ).rejects.toThrow('Authentication')
+  })
+  it('paginates messages without gaps when timestamps are identical', async () => {
+    const conversation = (
+      await state.db
+        .select()
+        .from(schema.supportConversations)
+        .where(eq(schema.supportConversations.userId, memberId))
+    )[0]
+    const createdAt = new Date('2030-01-01T12:00:00Z')
+    await state.db.insert(schema.supportMessages).values(
+      Array.from({ length: 60 }, (_, index) => ({
+        id: randomUUID(),
+        conversationId: conversation.id,
+        authorUserId: adminId,
+        fromAdmin: true,
+        body: `History ${index}`,
+        createdAt,
+      })),
+    )
+    signIn(memberId, 'USER')
+    const first = await getSupportConversation({ data: {} })
+    expect(first.messages).toHaveLength(50)
+    expect(first.olderCursor).not.toBeNull()
+    const next = await getSupportConversation({
+      data: { before: first.olderCursor! },
+    })
+    expect(next.messages).toHaveLength(12)
+    expect(
+      new Set([...first.messages, ...next.messages].map((item) => item.id))
+        .size,
+    ).toBe(62)
+    expect(next.olderCursor).toBeNull()
   })
 })

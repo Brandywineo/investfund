@@ -204,6 +204,13 @@
       "when": 1791542751174,
       "tag": "0028_scanner_diagnostics",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1791616633003,
+      "tag": "0029_private_support",
+      "breakpoints": true
     }
   ]
 }
