@@ -16,6 +16,10 @@ import { formatUsdt, money } from '#/domain/money'
 import { calculateWithdrawal } from '#/domain/withdrawal'
 import { postLedgerTransaction } from './ledger.service'
 import { notifyUser } from './notification.service'
+import {
+  queueDepositReceipt,
+  queueWithdrawalReceipt,
+} from './receipt-email.service'
 
 type TransactionExecutor = Parameters<Parameters<Database['transaction']>[0]>[0]
 
@@ -112,6 +116,7 @@ export async function confirmDeposit(depositId: string, actorUserId?: string) {
       { status: deposit.status },
       { status: 'CONFIRMED', txHash: deposit.txHash, amount: deposit.amount },
     )
+    await queueDepositReceipt(tx, { ...deposit, confirmedAt: new Date() })
     return deposit
   })
   const sponsor = await getDb()
@@ -239,6 +244,7 @@ export async function recordAdminConfirmedDeposit(input: {
         ledgerTransactionId: ledger.id,
       },
     )
+    await queueDepositReceipt(tx, created)
     return created
   })
 
@@ -370,7 +376,7 @@ export async function reserveWithdrawalRequest(input: {
         destinationAddress: input.destinationAddress,
         network: input.network,
       })
-      .returning({ id: withdrawals.id })
+      .returning()
       .then((rows) => rows.at(0))
     if (!withdrawal) throw new Error('Could not create withdrawal request')
     const ledger = await postLedgerTransaction(tx, {
@@ -404,6 +410,7 @@ export async function reserveWithdrawalRequest(input: {
         destinationAddress: input.destinationAddress,
       },
     )
+    await queueWithdrawalReceipt(tx, withdrawal, 'REQUESTED')
     return withdrawal
   })
 }
@@ -474,6 +481,7 @@ export async function broadcastWithdrawal(
       { status: withdrawal.status },
       { status: 'BROADCAST', txHash },
     )
+    await queueWithdrawalReceipt(tx, { ...withdrawal, txHash }, 'BROADCAST')
   })
 }
 
@@ -597,6 +605,7 @@ export async function settleBroadcastWithdrawal(
       .select()
       .from(withdrawals)
       .where(eq(withdrawals.id, withdrawalId))
+      .for('update')
       .limit(1)
       .then((rows) => rows.at(0))
     if (!withdrawal || withdrawal.status !== 'BROADCAST')
@@ -619,6 +628,7 @@ export async function settleBroadcastWithdrawal(
         { status: 'BROADCAST' },
         { status: 'CONFIRMED', txHash: withdrawal.txHash },
       )
+      await queueWithdrawalReceipt(tx, withdrawal, 'CONFIRMED')
       return
     }
 
@@ -670,6 +680,12 @@ export async function settleBroadcastWithdrawal(
       withdrawal.id,
       { status: 'BROADCAST' },
       { status: 'CANCELLED', txHash: withdrawal.txHash },
+    )
+    await queueWithdrawalReceipt(
+      tx,
+      withdrawal,
+      'FAILED',
+      'Blockchain transaction reverted; funds restored.',
     )
   })
 }
@@ -922,5 +938,6 @@ export async function releaseApprovedWithdrawal(
       { status: withdrawal.status },
       { status: releasedStatus, reason },
     )
+    await queueWithdrawalReceipt(tx, withdrawal, releasedStatus, reason)
   })
 }

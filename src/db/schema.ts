@@ -342,6 +342,7 @@ export const emailOutbox = pgTable(
     htmlBody: text('html_body').notNull(),
     textBody: text('text_body').notNull(),
     category: text('category').notNull(),
+    eventKey: text('event_key'),
     status: emailDeliveryStatus('status').default('PENDING').notNull(),
     attempts: integer('attempts').default(0).notNull(),
     nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true })
@@ -355,6 +356,7 @@ export const emailOutbox = pgTable(
   (table) => [
     index('email_outbox_status_next_idx').on(table.status, table.nextAttemptAt),
     index('email_outbox_created_idx').on(table.createdAt),
+    uniqueIndex('email_outbox_event_key_unique').on(table.eventKey),
   ],
 )
 
