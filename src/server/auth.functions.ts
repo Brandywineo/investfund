@@ -15,17 +15,31 @@ import { hashPassword, verifyPassword } from './password'
 import { attachReferrer, ensureReferralCode } from './referral.service'
 import { notifyUser } from './notification.service'
 import { createEmailToken, hashEmailToken } from './email-token'
-import {
-  passwordChangedEmail,
-  passwordResetEmail,
-  verificationEmail,
-} from './email-template'
-import { appOrigin, getEmailSettings, queueEmail } from './email.service'
+import { queueUserReceipt, receiptTime } from './receipt-email.service'
+import { passwordResetEmail, verificationEmail } from './email-template'
+import { appOrigin, getEmailSettings } from './email.service'
 import {
   createUserSession,
   destroyUserSession,
   getSessionUser,
 } from './session'
+
+async function queuePasswordChanged(
+  tx: Parameters<Parameters<ReturnType<typeof getDb>['transaction']>[0]>[0],
+  userId: string,
+  eventKey: string,
+) {
+  await queueUserReceipt(tx, {
+    userId,
+    eventKey,
+    category: 'PASSWORD_CHANGED',
+    title: 'Password changed',
+    message:
+      'your password was changed successfully and existing sessions were signed out. If you did not make this change, contact support immediately.',
+    details: [['Changed at', receiptTime(new Date())]],
+    path: '/support',
+  })
+}
 
 const credentialsSchema = z.object({
   email: z.string().trim().toLowerCase().email().max(254),
@@ -50,6 +64,7 @@ export const register = createServerFn({ method: 'POST' })
       ? verificationEmail(
           data.displayName,
           `${appOrigin()}/verify-email?token=${encodeURIComponent(verification.token)}`,
+          mailSettings?.verificationExpiryMinutes ?? 1440,
         )
       : null
     const existing = (
@@ -208,6 +223,20 @@ export const changePassword = createServerFn({ method: 'POST' })
         after: { sessionsRevoked: true },
       })
       await tx.delete(sessions).where(sql`${sessions.userId} = ${user.id}`)
+      await tx
+        .update(passwordResetTokens)
+        .set({ consumedAt: new Date() })
+        .where(
+          and(
+            eq(passwordResetTokens.userId, user.id),
+            isNull(passwordResetTokens.consumedAt),
+          ),
+        )
+      await queuePasswordChanged(
+        tx,
+        user.id,
+        `password-change:${crypto.randomUUID()}`,
+      )
     })
     await destroyUserSession()
     return { success: true }
@@ -255,6 +284,7 @@ export const resendVerificationEmail = createServerFn({ method: 'POST' })
     const message = verificationEmail(
       user.displayName,
       `${appOrigin()}/verify-email?token=${encodeURIComponent(token.token)}`,
+      settings.verificationExpiryMinutes,
     )
     await getDb().transaction(async (tx) => {
       await tx
@@ -297,6 +327,7 @@ export const verifyEmail = createServerFn({ method: 'POST' })
             gt(emailVerificationTokens.expiresAt, new Date()),
           ),
         )
+        .for('update')
         .limit(1)
         .then((rows) => rows.at(0))
       if (!token)
@@ -305,14 +336,30 @@ export const verifyEmail = createServerFn({ method: 'POST' })
         .update(emailVerificationTokens)
         .set({ consumedAt: new Date() })
         .where(eq(emailVerificationTokens.id, token.id))
-      await tx
+      const verified = await tx
         .update(users)
         .set({
           status: 'ACTIVE',
           emailVerifiedAt: new Date(),
           updatedAt: new Date(),
         })
-        .where(eq(users.id, token.userId))
+        .where(
+          and(
+            eq(users.id, token.userId),
+            eq(users.status, 'PENDING_VERIFICATION'),
+          ),
+        )
+        .returning({ id: users.id })
+      if (!verified.length) throw new Error('Account cannot be verified')
+      await queueUserReceipt(tx, {
+        userId: token.userId,
+        eventKey: `user:${token.userId}:welcome`,
+        category: 'WELCOME',
+        title: 'Welcome to InvestFund',
+        message:
+          'your email is verified. In Wallet, you can view your deposit address and confirmed funds. Depositing does not automatically start an investment: if you choose to invest, open Invest and complete activation. Ledger records your activity, and Help & Support opens your private support conversation.',
+        path: '/app',
+      })
       await tx.insert(auditLogs).values({
         actorUserId: token.userId,
         action: 'EMAIL_VERIFIED',
@@ -355,6 +402,7 @@ export const requestPasswordReset = createServerFn({ method: 'POST' })
     const message = passwordResetEmail(
       user.displayName,
       `${appOrigin()}/reset-password?token=${encodeURIComponent(token.token)}`,
+      settings.resetExpiryMinutes,
     )
     await getDb().transaction(async (tx) => {
       await tx
@@ -394,7 +442,7 @@ export const resetPassword = createServerFn({ method: 'POST' })
   )
   .handler(async ({ data }) => {
     const tokenHash = hashEmailToken(data.token)
-    const changedUser = await getDb().transaction(async (tx) => {
+    await getDb().transaction(async (tx) => {
       const token = await tx
         .select()
         .from(passwordResetTokens)
@@ -405,6 +453,7 @@ export const resetPassword = createServerFn({ method: 'POST' })
             gt(passwordResetTokens.expiresAt, new Date()),
           ),
         )
+        .for('update')
         .limit(1)
         .then((rows) => rows.at(0))
       if (!token)
@@ -415,7 +464,8 @@ export const resetPassword = createServerFn({ method: 'POST' })
         .where(eq(users.id, token.userId))
         .limit(1)
         .then((rows) => rows.at(0))
-      if (!user) throw new Error('Account was not found')
+      if (!user || user.status === 'SUSPENDED')
+        throw new Error('Account was not found')
       await tx
         .update(passwordResetTokens)
         .set({ consumedAt: new Date() })
@@ -435,13 +485,20 @@ export const resetPassword = createServerFn({ method: 'POST' })
         entityId: user.id,
         after: { sessionsRevoked: true },
       })
-      return user
+      await tx
+        .update(passwordResetTokens)
+        .set({ consumedAt: new Date() })
+        .where(
+          and(
+            eq(passwordResetTokens.userId, user.id),
+            isNull(passwordResetTokens.consumedAt),
+          ),
+        )
+      await queuePasswordChanged(
+        tx,
+        user.id,
+        `password-reset:${token.id}:changed`,
+      )
     })
-    const message = passwordChangedEmail(changedUser.displayName)
-    await queueEmail({
-      recipient: changedUser.email,
-      category: 'PASSWORD_CHANGED',
-      ...message,
-    }).catch(() => undefined)
     return { success: true }
   })

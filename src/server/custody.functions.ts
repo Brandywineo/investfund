@@ -29,6 +29,7 @@ import {
   advanceTreasuryStatus,
   broadcastTreasuryTransfer,
   broadcastWithdrawal,
+  settleBroadcastWithdrawal,
   confirmDeposit,
   creditBrokerTransfer,
   recordTreasuryReturn,
@@ -857,18 +858,7 @@ export const reviewWithdrawal = createServerFn({ method: 'POST' })
         throw new Error('A transaction hash is required')
       await broadcastWithdrawal(data.withdrawalId, data.reference, admin.id)
     } else if (data.action === 'CONFIRM') {
-      const result = await getDb()
-        .update(withdrawals)
-        .set({
-          status: 'CONFIRMED',
-          confirmedAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .where(
-          sql`${withdrawals.id} = ${data.withdrawalId} and ${withdrawals.status} = 'BROADCAST'`,
-        )
-        .returning({ id: withdrawals.id })
-      if (result.length !== 1) throw new Error('Broadcast withdrawal not found')
+      await settleBroadcastWithdrawal(data.withdrawalId, true)
     } else
       await releaseApprovedWithdrawal(
         data.withdrawalId,

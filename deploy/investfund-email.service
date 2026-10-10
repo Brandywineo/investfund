@@ -10,7 +10,7 @@ Group=deno
 WorkingDirectory=/home/deno/web/ndumb.hs.vc/public_html
 EnvironmentFile=/home/deno/web/ndumb.hs.vc/public_html/.env
 ExecStart=/home/deno/.bun/bin/bun run email:run
-TimeoutStartSec=45
+TimeoutStartSec=450
 
 [Install]
 WantedBy=multi-user.target

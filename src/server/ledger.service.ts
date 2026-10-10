@@ -20,6 +20,7 @@ import {
 import { assertBalanced } from '#/domain/ledger'
 import type { LedgerLine } from '#/domain/ledger'
 import { money } from '#/domain/money'
+import { queueUserReceipt, receiptTime } from './receipt-email.service'
 import { REFERRAL_RATES, referralCommission } from '#/domain/referral'
 
 interface PostTransactionInput {
@@ -101,6 +102,7 @@ export async function createInvestment(
       settings.maximumInvestment,
     )
 
+    const activatedAt = new Date()
     const investment = (
       await tx
         .insert(investments)
@@ -108,7 +110,7 @@ export async function createInvestment(
           userId,
           principal: amount.toString(),
           compoundedBalance: amount.toString(),
-          activatedAt: new Date(),
+          activatedAt,
         })
         .returning({ id: investments.id })
     ).at(0)
@@ -143,6 +145,39 @@ export async function createInvestment(
         { accountId: available, side: 'DEBIT', amount },
         { accountId: invested, side: 'CREDIT', amount },
       ],
+    })
+    const rate = await tx
+      .select()
+      .from(accrualRates)
+      .where(
+        and(
+          lte(accrualRates.effectiveFrom, activatedAt),
+          or(
+            isNull(accrualRates.effectiveUntil),
+            gte(accrualRates.effectiveUntil, activatedAt),
+          ),
+        ),
+      )
+      .orderBy(desc(accrualRates.effectiveFrom))
+      .limit(1)
+      .then((rows) => rows.at(0))
+    await queueUserReceipt(tx, {
+      userId,
+      eventKey: `investment:${investment.id}:activated`,
+      category: 'INVESTMENT_ACTIVATED',
+      title: 'Investment activated',
+      message:
+        'your investment is now active. Updates are posted by the daily accrual run, not continuously. The first update follows a scheduled run after activation. The current configured rate may change; review the platform terms and your Ledger for actual postings.',
+      details: [
+        ['Principal', `${amount.toFixed(8)} USDT`],
+        ['Activated at', receiptTime(activatedAt)],
+        [
+          'Configured daily rate at activation',
+          rate ? `${rate.dailyRatePercent}%` : 'No effective rate configured',
+        ],
+        ['Investment reference', investment.id],
+      ],
+      path: '/invest',
     })
     return investment
   })

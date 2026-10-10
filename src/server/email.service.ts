@@ -9,6 +9,7 @@ export type QueuedEmail = {
   htmlBody: string
   textBody: string
   category: string
+  eventKey?: string | null
 }
 
 export function appOrigin(): string {
@@ -36,7 +37,7 @@ export async function queueEmail(message: QueuedEmail): Promise<string> {
 
 async function sendWithResend(
   settings: NonNullable<Awaited<ReturnType<typeof getEmailSettings>>>,
-  message: QueuedEmail,
+  message: QueuedEmail & { id: string },
 ): Promise<string> {
   if (!settings.encryptedApiKey) throw new Error('Resend API key is missing')
   const response = await fetch('https://api.resend.com/emails', {
@@ -44,6 +45,7 @@ async function sendWithResend(
     headers: {
       authorization: `Bearer ${decryptEmailSecret(settings.encryptedApiKey)}`,
       'content-type': 'application/json',
+      'Idempotency-Key': `investfund-email:${message.id}`,
     },
     body: JSON.stringify({
       from: `${settings.fromName} <${settings.fromAddress}>`,
@@ -72,6 +74,18 @@ async function sendWithResend(
 export async function processEmailOutbox(limit = 20) {
   const settings = await getEmailSettings()
   if (!settings?.enabled) return { processed: 0, sent: 0, failed: 0 }
+
+  // Recover a worker interrupted after claiming a job. Resend's stable key
+  // prevents an accepted delivery being sent again during retries.
+  await getDb()
+    .update(emailOutbox)
+    .set({ status: 'FAILED', nextAttemptAt: new Date(), updatedAt: new Date() })
+    .where(
+      and(
+        eq(emailOutbox.status, 'PROCESSING'),
+        lte(emailOutbox.updatedAt, new Date(Date.now() - 5 * 60_000)),
+      ),
+    )
 
   const candidates = await getDb()
     .select()
