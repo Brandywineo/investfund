@@ -22,6 +22,7 @@ import { Route as NotificationsRouteImport } from './routes/notifications'
 import { Route as ReferralsRouteImport } from './routes/referrals'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as SignupRouteImport } from './routes/signup'
+import { Route as SupportRouteImport } from './routes/support'
 import { Route as TradingRouteImport } from './routes/trading'
 import { Route as VerifyEmailRouteImport } from './routes/verify-email'
 import { Route as VerifyPendingRouteImport } from './routes/verify-pending'
@@ -32,6 +33,7 @@ import { Route as AdminEmailRouteImport } from './routes/admin_.email'
 import { Route as AdminExitsRouteImport } from './routes/admin_.exits'
 import { Route as AdminOperationsRouteImport } from './routes/admin_.operations'
 import { Route as AdminReferralsRouteImport } from './routes/admin_.referrals'
+import { Route as AdminSupportRouteImport } from './routes/admin_.support'
 import { Route as AdminTradingRouteImport } from './routes/admin_.trading'
 import { Route as AdminUsersRouteImport } from './routes/admin_.users'
 import { Route as AdminWalletSetsRouteImport } from './routes/admin_.wallet-sets'
@@ -105,6 +107,11 @@ const SignupRoute = SignupRouteImport.update({
   path: '/signup',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SupportRoute = SupportRouteImport.update({
+  id: '/support',
+  path: '/support',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TradingRoute = TradingRouteImport.update({
   id: '/trading',
   path: '/trading',
@@ -153,6 +160,11 @@ const AdminOperationsRoute = AdminOperationsRouteImport.update({
 const AdminReferralsRoute = AdminReferralsRouteImport.update({
   id: '/admin_/referrals',
   path: '/admin/referrals',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminSupportRoute = AdminSupportRouteImport.update({
+  id: '/admin_/support',
+  path: '/admin/support',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminTradingRoute = AdminTradingRouteImport.update({
@@ -206,6 +218,7 @@ export interface FileRoutesByFullPath {
   '/referrals': typeof ReferralsRoute
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
+  '/support': typeof SupportRoute
   '/trading': typeof TradingRoute
   '/verify-email': typeof VerifyEmailRoute
   '/verify-pending': typeof VerifyPendingRoute
@@ -216,6 +229,7 @@ export interface FileRoutesByFullPath {
   '/admin/exits': typeof AdminExitsRoute
   '/admin/operations': typeof AdminOperationsRoute
   '/admin/referrals': typeof AdminReferralsRoute
+  '/admin/support': typeof AdminSupportRoute
   '/admin/trading': typeof AdminTradingRoute
   '/admin/users': typeof AdminUsersRoute
   '/admin/wallet-sets': typeof AdminWalletSetsRoute
@@ -238,6 +252,7 @@ export interface FileRoutesByTo {
   '/referrals': typeof ReferralsRoute
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
+  '/support': typeof SupportRoute
   '/trading': typeof TradingRoute
   '/verify-email': typeof VerifyEmailRoute
   '/verify-pending': typeof VerifyPendingRoute
@@ -248,6 +263,7 @@ export interface FileRoutesByTo {
   '/admin/exits': typeof AdminExitsRoute
   '/admin/operations': typeof AdminOperationsRoute
   '/admin/referrals': typeof AdminReferralsRoute
+  '/admin/support': typeof AdminSupportRoute
   '/admin/trading': typeof AdminTradingRoute
   '/admin/users': typeof AdminUsersRoute
   '/admin/wallet-sets': typeof AdminWalletSetsRoute
@@ -271,6 +287,7 @@ export interface FileRoutesById {
   '/referrals': typeof ReferralsRoute
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
+  '/support': typeof SupportRoute
   '/trading': typeof TradingRoute
   '/verify-email': typeof VerifyEmailRoute
   '/verify-pending': typeof VerifyPendingRoute
@@ -281,6 +298,7 @@ export interface FileRoutesById {
   '/admin_/exits': typeof AdminExitsRoute
   '/admin_/operations': typeof AdminOperationsRoute
   '/admin_/referrals': typeof AdminReferralsRoute
+  '/admin_/support': typeof AdminSupportRoute
   '/admin_/trading': typeof AdminTradingRoute
   '/admin_/users': typeof AdminUsersRoute
   '/admin_/wallet-sets': typeof AdminWalletSetsRoute
@@ -305,6 +323,7 @@ export interface FileRouteTypes {
     | '/referrals'
     | '/reset-password'
     | '/signup'
+    | '/support'
     | '/trading'
     | '/verify-email'
     | '/verify-pending'
@@ -315,6 +334,7 @@ export interface FileRouteTypes {
     | '/admin/exits'
     | '/admin/operations'
     | '/admin/referrals'
+    | '/admin/support'
     | '/admin/trading'
     | '/admin/users'
     | '/admin/wallet-sets'
@@ -337,6 +357,7 @@ export interface FileRouteTypes {
     | '/referrals'
     | '/reset-password'
     | '/signup'
+    | '/support'
     | '/trading'
     | '/verify-email'
     | '/verify-pending'
@@ -347,6 +368,7 @@ export interface FileRouteTypes {
     | '/admin/exits'
     | '/admin/operations'
     | '/admin/referrals'
+    | '/admin/support'
     | '/admin/trading'
     | '/admin/users'
     | '/admin/wallet-sets'
@@ -369,6 +391,7 @@ export interface FileRouteTypes {
     | '/referrals'
     | '/reset-password'
     | '/signup'
+    | '/support'
     | '/trading'
     | '/verify-email'
     | '/verify-pending'
@@ -379,6 +402,7 @@ export interface FileRouteTypes {
     | '/admin_/exits'
     | '/admin_/operations'
     | '/admin_/referrals'
+    | '/admin_/support'
     | '/admin_/trading'
     | '/admin_/users'
     | '/admin_/wallet-sets'
@@ -402,6 +426,7 @@ export interface RootRouteChildren {
   ReferralsRoute: typeof ReferralsRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
   SignupRoute: typeof SignupRoute
+  SupportRoute: typeof SupportRoute
   TradingRoute: typeof TradingRoute
   VerifyEmailRoute: typeof VerifyEmailRoute
   VerifyPendingRoute: typeof VerifyPendingRoute
@@ -412,6 +437,7 @@ export interface RootRouteChildren {
   AdminExitsRoute: typeof AdminExitsRoute
   AdminOperationsRoute: typeof AdminOperationsRoute
   AdminReferralsRoute: typeof AdminReferralsRoute
+  AdminSupportRoute: typeof AdminSupportRoute
   AdminTradingRoute: typeof AdminTradingRoute
   AdminUsersRoute: typeof AdminUsersRoute
   AdminWalletSetsRoute: typeof AdminWalletSetsRoute
@@ -514,6 +540,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SignupRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/support': {
+      id: '/support'
+      path: '/support'
+      fullPath: '/support'
+      preLoaderRoute: typeof SupportRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/trading': {
       id: '/trading'
       path: '/trading'
@@ -584,6 +617,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminReferralsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin_/support': {
+      id: '/admin_/support'
+      path: '/admin/support'
+      fullPath: '/admin/support'
+      preLoaderRoute: typeof AdminSupportRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin_/trading': {
       id: '/admin_/trading'
       path: '/admin/trading'
@@ -650,6 +690,7 @@ const rootRouteChildren: RootRouteChildren = {
   ReferralsRoute: ReferralsRoute,
   ResetPasswordRoute: ResetPasswordRoute,
   SignupRoute: SignupRoute,
+  SupportRoute: SupportRoute,
   TradingRoute: TradingRoute,
   VerifyEmailRoute: VerifyEmailRoute,
   VerifyPendingRoute: VerifyPendingRoute,
@@ -660,6 +701,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminExitsRoute: AdminExitsRoute,
   AdminOperationsRoute: AdminOperationsRoute,
   AdminReferralsRoute: AdminReferralsRoute,
+  AdminSupportRoute: AdminSupportRoute,
   AdminTradingRoute: AdminTradingRoute,
   AdminUsersRoute: AdminUsersRoute,
   AdminWalletSetsRoute: AdminWalletSetsRoute,

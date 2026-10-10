@@ -1516,3 +1516,48 @@ export const communityReports = pgTable(
     ),
   ],
 )
+
+export const supportConversations = pgTable(
+  'support_conversations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .references(() => users.id, { onDelete: 'cascade' })
+      .notNull(),
+    userReadAt: timestamp('user_read_at', { withTimezone: true }),
+    adminReadAt: timestamp('admin_read_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('support_conversations_user_unique').on(table.userId),
+  ],
+)
+
+export const supportMessages = pgTable(
+  'support_messages',
+  {
+    id: uuid('id').primaryKey(),
+    conversationId: uuid('conversation_id')
+      .references(() => supportConversations.id, { onDelete: 'cascade' })
+      .notNull(),
+    authorUserId: uuid('author_user_id')
+      .references(() => users.id)
+      .notNull(),
+    fromAdmin: boolean('from_admin').notNull(),
+    body: text('body').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index('support_messages_conversation_created_idx').on(
+      table.conversationId,
+      table.createdAt,
+      table.id,
+    ),
+    check(
+      'support_messages_body_length',
+      sql`length(${table.body}) between 1 and 4000`,
+    ),
+  ],
+)

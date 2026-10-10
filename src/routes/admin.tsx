@@ -125,6 +125,7 @@ function AdminPage() {
             <Link to="/admin/email">Email</Link>
             <Link to="/admin/alerts">Alerts</Link>
             <Link to="/admin/users">Manage users</Link>
+            <Link to="/admin/support">Support inbox</Link>
             <Link to="/app">Dashboard →</Link>
           </nav>
         </div>
