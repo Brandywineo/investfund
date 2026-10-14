@@ -1547,6 +1547,7 @@ export const supportMessages = pgTable(
       .notNull(),
     fromAdmin: boolean('from_admin').notNull(),
     body: text('body').notNull(),
+    imageData: text('image_data'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .defaultNow()
       .notNull(),

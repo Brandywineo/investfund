@@ -16,10 +16,16 @@ export function SupportConversation({
 }) {
   const [thread, setThread] = useState<Conversation | null>(null)
   const [body, setBody] = useState('')
+  const [image, setImage] = useState<string | undefined>()
+  const [readingImage, setReadingImage] = useState(false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
-  const request = useRef<{ id: string; body: string } | null>(null)
+  const request = useRef<{
+    id: string
+    body: string
+    imageData?: string
+  } | null>(null)
   const end = useRef<HTMLDivElement>(null)
   useEffect(() => {
     let active = true
@@ -56,6 +62,9 @@ export function SupportConversation({
       }
     }
     setThread(null)
+    setBody('')
+    setImage(undefined)
+    request.current = null
     void refresh()
     const timer = setInterval(() => void refresh(), 15_000)
     return () => {
@@ -64,20 +73,29 @@ export function SupportConversation({
     }
   }, [userId])
   async function send() {
-    if (!body.trim() || busy) return
+    if (!body.trim() || busy || readingImage) return
     setBusy(true)
     setError('')
-    if (request.current?.body !== body.trim())
-      request.current = { id: crypto.randomUUID(), body: body.trim() }
+    if (
+      request.current?.body !== body.trim() ||
+      request.current.imageData !== image
+    )
+      request.current = {
+        id: crypto.randomUUID(),
+        body: body.trim(),
+        imageData: image,
+      }
     try {
       await sendSupportMessage({
         data: {
           userId,
           requestId: request.current.id,
           body: request.current.body,
+          imageData: request.current.imageData,
         },
       })
       setBody('')
+      setImage(undefined)
       request.current = null
       const value = await getSupportConversation({ data: { userId } })
       setThread(value)
@@ -187,6 +205,22 @@ export function SupportConversation({
                 </b>
                 <span>{formatKenyaDateTime(message.createdAt)} EAT</span>
               </div>
+              {message.hasImage && (
+                <a
+                  href={`/api/support-images/${message.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-3 block"
+                >
+                  <img
+                    src={`/api/support-images/${message.id}`}
+                    alt={message.body}
+                    loading="lazy"
+                    className="max-h-80 max-w-full rounded-xl object-contain"
+                  />
+                  <span className="text-xs font-bold">Open full image ↗</span>
+                </a>
+              )}
               <p className="mt-2 whitespace-pre-wrap break-words text-sm">
                 {message.body}
               </p>
@@ -206,6 +240,7 @@ export function SupportConversation({
         </label>
         <textarea
           id="support-message"
+          disabled={busy}
           value={body}
           onChange={(event) => setBody(event.target.value)}
           maxLength={4000}
@@ -218,12 +253,77 @@ export function SupportConversation({
           }
           className="mt-2 w-full rounded-xl border border-black/10 p-3 text-sm"
         />
+        {admin && (
+          <div className="mt-3 space-y-2">
+            <label className="block text-sm font-bold" htmlFor="support-image">
+              Attach trading screenshot
+            </label>
+            <input
+              id="support-image"
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              disabled={busy || readingImage}
+              onChange={async (event) => {
+                const file = event.target.files?.[0]
+                event.target.value = ''
+                if (!file) return
+                if (
+                  !['image/png', 'image/jpeg', 'image/webp'].includes(
+                    file.type,
+                  ) ||
+                  file.size > 1_000_000
+                ) {
+                  setError('Use a PNG, JPEG or WebP image under 1 MB')
+                  return
+                }
+                setReadingImage(true)
+                setError('')
+                try {
+                  const data = await new Promise<string>((resolve, reject) => {
+                    const reader = new FileReader()
+                    reader.onload = () => resolve(String(reader.result))
+                    reader.onerror = () =>
+                      reject(new Error('Image could not be read'))
+                    reader.readAsDataURL(file)
+                  })
+                  setImage(data)
+                } catch {
+                  setError('Image could not be read')
+                } finally {
+                  setReadingImage(false)
+                }
+              }}
+            />
+            <p className="text-xs text-[#557065]">
+              PNG, JPEG or WebP, up to 1 MB. Add a caption with the screenshot
+              capture time. Remove private account details before sending.
+            </p>
+            {readingImage && <p className="text-sm">Loading image…</p>}
+            {image && (
+              <div>
+                <img
+                  src={image}
+                  alt="Attachment preview"
+                  className="max-h-48 max-w-full rounded-xl"
+                />
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setImage(undefined)}
+                  className="mt-2 text-sm font-bold"
+                >
+                  Remove image
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         <div className="mt-3 flex items-center justify-between gap-3">
           <span className="text-xs text-[#557065]">
             Replies appear here and in your notification bell.
           </span>
           <button
-            disabled={busy || !body.trim() || !thread}
+            disabled={busy || readingImage || !body.trim() || !thread}
             className="rounded-xl bg-[#123d2d] px-5 py-3 text-sm font-bold text-white disabled:opacity-40"
           >
             {busy ? 'Sending…' : 'Send message'}
