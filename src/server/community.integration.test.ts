@@ -24,6 +24,8 @@ import {
 import { eq } from 'drizzle-orm'
 import { getCommunityImageResponse } from './community-image.service'
 import { getSupportImageResponse } from './support-image.service'
+import { getSupportFileResponse } from './support-file.service'
+import { supportAttachmentInput } from './support-attachment.validation'
 import { listUsers } from './admin-users.functions'
 import { getAdminWithdrawals } from './custody.functions'
 
@@ -561,5 +563,100 @@ describe('private support PostgreSQL handlers', () => {
         .size,
     ).toBe(62)
     expect(next.olderCursor).toBeNull()
+  })
+})
+
+describe('private support files', () => {
+  const requestId = randomUUID()
+  const attachments = [
+    { name: 'chart.png', mime: 'image/png', data: png.split(',')[1] },
+    {
+      name: 'report.pdf',
+      mime: 'application/pdf',
+      data: Buffer.from('%PDF-1.7\n%%EOF').toString('base64'),
+    },
+    {
+      name: 'notes.txt',
+      mime: 'text/plain',
+      data: Buffer.from('Trade notes').toString('base64'),
+    },
+  ]
+  it('sends multiple files atomically, retries once and lists metadata only', async () => {
+    signIn(adminId, 'ADMIN')
+    const input = {
+      userId: managerId,
+      requestId,
+      body: 'Trading update',
+      attachments,
+    }
+    await sendSupportMessage({ data: input })
+    await sendSupportMessage({ data: input })
+    const conversation = await getSupportConversation({
+      data: { userId: managerId },
+    })
+    expect(conversation.messages).toHaveLength(1)
+    expect(
+      conversation.messages[0].attachments.map((file) => file.name),
+    ).toEqual(['chart.png', 'report.pdf', 'notes.txt'])
+    expect(conversation.messages[0].attachments[1].size).toBe(14)
+    expect(conversation.messages[0].attachments[0]).not.toHaveProperty('data')
+    await expect(
+      sendSupportMessage({
+        data: { ...input, attachments: attachments.slice(1) },
+      }),
+    ).rejects.toThrow('conflict')
+  })
+  it('protects each file download and forces documents to download', async () => {
+    signIn(managerId, 'MANAGER')
+    const pdf = await getSupportFileResponse(requestId, '1')
+    expect(pdf.status).toBe(200)
+    expect(pdf.headers.get('content-type')).toBe('application/pdf')
+    expect(pdf.headers.get('content-disposition')).toContain('attachment;')
+    expect(pdf.headers.get('cache-control')).toBe('private, no-store')
+    expect(await pdf.text()).toBe('%PDF-1.7\n%%EOF')
+    expect(
+      (await getSupportFileResponse(requestId, '0')).headers.get(
+        'content-disposition',
+      ),
+    ).toContain('inline;')
+    expect((await getSupportFileResponse(requestId, '4')).status).toBe(404)
+    expect((await getSupportFileResponse(requestId, '-1')).status).toBe(404)
+    signIn(memberId, 'USER')
+    expect((await getSupportFileResponse(requestId, '1')).status).toBe(404)
+    await expect(
+      sendSupportMessage({
+        data: { requestId: randomUUID(), body: 'File', attachments },
+      }),
+    ).rejects.toThrow('Only administrators')
+    state.user = null
+    expect((await getSupportFileResponse(requestId, '1')).status).toBe(401)
+    signIn(adminId, 'ADMIN')
+    expect((await getSupportFileResponse(requestId, '1')).status).toBe(200)
+  })
+  it('rejects excessive file counts, invalid formats, oversize data and unsafe names', () => {
+    signIn(adminId, 'ADMIN')
+    expect(() =>
+      sendSupportMessage({
+        data: {
+          userId: managerId,
+          requestId: randomUUID(),
+          body: 'Too many',
+          attachments: Array(6).fill(attachments[0]),
+        },
+      }),
+    ).toThrow()
+    for (const file of [
+      { ...attachments[1], name: '../report.pdf' },
+      { ...attachments[1], data: Buffer.from('not a PDF').toString('base64') },
+      { ...attachments[1], mime: 'text/html' },
+      { ...attachments[2], data: Buffer.alloc(5_000_001).toString('base64') },
+      { ...attachments[2], data: Buffer.from([255, 0, 1]).toString('base64') },
+      {
+        name: 'report.docx',
+        mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        data: Buffer.from('fake ZIP').toString('base64'),
+      },
+    ])
+      expect(supportAttachmentInput.safeParse(file).success).toBe(false)
   })
 })

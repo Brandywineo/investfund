@@ -3,6 +3,9 @@ import { and, desc, eq, lt, lte, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { getDb } from '#/db'
 import { communityImage } from '#/domain/community'
+import { supportAttachmentInput } from './support-attachment.validation'
+import { SUPPORT_FILE_COUNT } from '#/domain/support-attachments'
+import type { SupportAttachmentInfo } from '#/domain/support-attachments'
 import {
   auditLogs,
   notifications,
@@ -74,6 +77,9 @@ export const getSupportConversation = createServerFn({ method: 'GET' })
         id: supportMessages.id,
         body: supportMessages.body,
         hasImage: sql<boolean>`${supportMessages.imageData} is not null`,
+        attachments: sql<
+          SupportAttachmentInfo[]
+        >`coalesce((select jsonb_agg(jsonb_build_object('name', f->>'name', 'mime', f->>'mime', 'size', octet_length(decode(f->>'data', 'base64')))) from jsonb_array_elements(${supportMessages.attachments}) f), '[]'::jsonb)`,
         fromAdmin: supportMessages.fromAdmin,
         createdAt: supportMessages.createdAt,
       })
@@ -170,14 +176,20 @@ export const sendSupportMessage = createServerFn({ method: 'POST' })
       requestId: z.string().uuid(),
       body: z.string().trim().min(1).max(4000),
       imageData: communityImage.optional(),
+      attachments: z
+        .array(supportAttachmentInput)
+        .max(SUPPORT_FILE_COUNT)
+        .default([]),
     }),
   )
   .handler(async ({ data }) => {
     const user = await requireUser()
     const target = ownerId(user, data.userId)
     const fromAdmin = user.role === 'ADMIN' && target !== user.id
-    if (data.imageData && !fromAdmin)
-      throw new Error('Only administrators can attach support images')
+    if (data.imageData && data.attachments.length)
+      throw new Error('Use attachments or a legacy image, not both')
+    if ((data.imageData || data.attachments.length) && !fromAdmin)
+      throw new Error('Only administrators can attach support files')
     return getDb().transaction(async (tx) => {
       const owner = await tx
         .select({ id: users.id })
@@ -207,7 +219,16 @@ export const sendSupportMessage = createServerFn({ method: 'POST' })
           previous.authorUserId !== user.id ||
           previous.conversationId !== conversation.id ||
           previous.body !== data.body ||
-          previous.imageData !== (data.imageData ?? null)
+          previous.imageData !== (data.imageData ?? null) ||
+          previous.attachments.length !== data.attachments.length ||
+          previous.attachments.some((file, index) => {
+            const next = data.attachments[index]
+            return (
+              file.name !== next.name ||
+              file.mime !== next.mime ||
+              file.data !== next.data
+            )
+          })
         )
           throw new Error('Message request conflict')
         return { id: previous.id }
@@ -233,6 +254,7 @@ export const sendSupportMessage = createServerFn({ method: 'POST' })
         fromAdmin,
         body: data.body,
         imageData: data.imageData,
+        attachments: data.attachments,
       })
       await tx
         .update(supportConversations)

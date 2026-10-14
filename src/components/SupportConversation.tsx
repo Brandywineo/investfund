@@ -5,6 +5,13 @@ import {
   sendSupportMessage,
 } from '#/server/support-chat.functions'
 import { formatKenyaDateTime } from '#/domain/display-time'
+import {
+  supportFileAccept,
+  supportFileMime,
+  SUPPORT_FILE_COUNT,
+  SUPPORT_FILE_LIMIT,
+} from '#/domain/support-attachments'
+import type { SupportAttachment } from '#/domain/support-attachments'
 
 type Conversation = Awaited<ReturnType<typeof getSupportConversation>>
 export function SupportConversation({
@@ -16,7 +23,7 @@ export function SupportConversation({
 }) {
   const [thread, setThread] = useState<Conversation | null>(null)
   const [body, setBody] = useState('')
-  const [image, setImage] = useState<string | undefined>()
+  const [files, setFiles] = useState<SupportAttachment[]>([])
   const [readingImage, setReadingImage] = useState(false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -24,7 +31,7 @@ export function SupportConversation({
   const request = useRef<{
     id: string
     body: string
-    imageData?: string
+    attachments: SupportAttachment[]
   } | null>(null)
   const end = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -63,7 +70,7 @@ export function SupportConversation({
     }
     setThread(null)
     setBody('')
-    setImage(undefined)
+    setFiles([])
     request.current = null
     void refresh()
     const timer = setInterval(() => void refresh(), 15_000)
@@ -78,12 +85,12 @@ export function SupportConversation({
     setError('')
     if (
       request.current?.body !== body.trim() ||
-      request.current.imageData !== image
+      request.current.attachments !== files
     )
       request.current = {
         id: crypto.randomUUID(),
         body: body.trim(),
-        imageData: image,
+        attachments: files,
       }
     try {
       await sendSupportMessage({
@@ -91,11 +98,11 @@ export function SupportConversation({
           userId,
           requestId: request.current.id,
           body: request.current.body,
-          imageData: request.current.imageData,
+          attachments: request.current.attachments,
         },
       })
       setBody('')
-      setImage(undefined)
+      setFiles([])
       request.current = null
       const value = await getSupportConversation({ data: { userId } })
       setThread(value)
@@ -221,6 +228,33 @@ export function SupportConversation({
                   <span className="text-xs font-bold">Open full image ↗</span>
                 </a>
               )}
+              {message.attachments.map((file, index) => (
+                <a
+                  key={index}
+                  href={`/api/support-files/${message.id}/${index}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-3 block rounded-xl border border-black/10 p-3"
+                >
+                  {file.mime.startsWith('image/') && (
+                    <img
+                      src={`/api/support-files/${message.id}/${index}`}
+                      alt={file.name}
+                      loading="lazy"
+                      className="max-h-80 max-w-full rounded-xl object-contain"
+                    />
+                  )}
+                  <span className="mt-1 block break-words text-sm font-bold">
+                    {file.name}
+                  </span>
+                  <span className="text-xs text-[#557065]">
+                    {(file.size / 1_000_000).toFixed(2)} MB ·{' '}
+                    {file.mime.startsWith('image/')
+                      ? 'Open image ↗'
+                      : 'Download file'}
+                  </span>
+                </a>
+              ))}
               <p className="mt-2 whitespace-pre-wrap break-words text-sm">
                 {message.body}
               </p>
@@ -255,67 +289,101 @@ export function SupportConversation({
         />
         {admin && (
           <div className="mt-3 space-y-2">
-            <label className="block text-sm font-bold" htmlFor="support-image">
-              Attach trading screenshot
+            <label className="block text-sm font-bold" htmlFor="support-files">
+              Attach files ({files.length}/{SUPPORT_FILE_COUNT})
             </label>
             <input
-              id="support-image"
+              id="support-files"
               type="file"
-              accept="image/png,image/jpeg,image/webp"
-              disabled={busy || readingImage}
+              multiple
+              accept={supportFileAccept}
+              disabled={
+                busy || readingImage || files.length >= SUPPORT_FILE_COUNT
+              }
               onChange={async (event) => {
-                const file = event.target.files?.[0]
+                const selected = Array.from(event.target.files ?? [])
                 event.target.value = ''
-                if (!file) return
+                if (!selected.length) return
+                if (files.length + selected.length > SUPPORT_FILE_COUNT) {
+                  setError('Attach up to 5 files per message')
+                  return
+                }
                 if (
-                  !['image/png', 'image/jpeg', 'image/webp'].includes(
-                    file.type,
-                  ) ||
-                  file.size > 1_000_000
+                  selected.some(
+                    (file) =>
+                      !supportFileMime(file.name) ||
+                      file.size > SUPPORT_FILE_LIMIT ||
+                      !file.size,
+                  )
                 ) {
-                  setError('Use a PNG, JPEG or WebP image under 1 MB')
+                  setError(
+                    'Use PNG, JPEG, WebP, PDF, DOCX, XLSX, TXT or CSV files up to 5 MB each',
+                  )
                   return
                 }
                 setReadingImage(true)
                 setError('')
                 try {
-                  const data = await new Promise<string>((resolve, reject) => {
-                    const reader = new FileReader()
-                    reader.onload = () => resolve(String(reader.result))
-                    reader.onerror = () =>
-                      reject(new Error('Image could not be read'))
-                    reader.readAsDataURL(file)
-                  })
-                  setImage(data)
+                  const added = await Promise.all(
+                    selected.map(async (file) => {
+                      const data = await new Promise<string>(
+                        (resolve, reject) => {
+                          const reader = new FileReader()
+                          reader.onload = () =>
+                            resolve(String(reader.result).split(',')[1])
+                          reader.onerror = () =>
+                            reject(new Error('File could not be read'))
+                          reader.readAsDataURL(file)
+                        },
+                      )
+                      return {
+                        name: file.name,
+                        mime: supportFileMime(file.name)!,
+                        data,
+                      }
+                    }),
+                  )
+                  setFiles((previous) => [...previous, ...added])
                 } catch {
-                  setError('Image could not be read')
+                  setError('Files could not be read; please select them again')
                 } finally {
                   setReadingImage(false)
                 }
               }}
             />
             <p className="text-xs text-[#557065]">
-              PNG, JPEG or WebP, up to 1 MB. Add a caption with the screenshot
-              capture time. Remove private account details before sending.
+              Up to 5 files, 5 MB each: PNG, JPEG, WebP, PDF, DOCX, XLSX, TXT or
+              CSV. Add a caption and remove private details before sending.
             </p>
-            {readingImage && <p className="text-sm">Loading image…</p>}
-            {image && (
-              <div>
-                <img
-                  src={image}
-                  alt="Attachment preview"
-                  className="max-h-48 max-w-full rounded-xl"
-                />
+            {readingImage && <p className="text-sm">Loading files…</p>}
+            {files.map((file, index) => (
+              <div
+                key={index}
+                className="rounded-xl border border-black/10 p-3"
+              >
+                {file.mime.startsWith('image/') && (
+                  <img
+                    src={`data:${file.mime};base64,${file.data}`}
+                    alt={file.name}
+                    className="max-h-48 max-w-full rounded-xl"
+                  />
+                )}
+                <p className="break-words text-sm font-bold">{file.name}</p>
                 <button
                   type="button"
-                  disabled={busy}
-                  onClick={() => setImage(undefined)}
+                  disabled={busy || readingImage}
+                  onClick={() =>
+                    setFiles((previous) =>
+                      previous.filter((_, i) => i !== index),
+                    )
+                  }
                   className="mt-2 text-sm font-bold"
+                  aria-label={`Remove ${file.name}`}
                 >
-                  Remove image
+                  Remove file
                 </button>
               </div>
-            )}
+            ))}
           </div>
         )}
         <div className="mt-3 flex items-center justify-between gap-3">
