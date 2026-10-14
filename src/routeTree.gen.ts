@@ -41,6 +41,7 @@ import { Route as AdminWalletTransfersRouteImport } from './routes/admin_.wallet
 import { Route as AdminWalletsRouteImport } from './routes/admin_.wallets'
 import { Route as AdminWithdrawalsRouteImport } from './routes/admin_.withdrawals'
 import { Route as ApiCommunityImagesMessageIdRouteImport } from './routes/api.community-images.$messageId'
+import { Route as ApiSupportImagesMessageIdRouteImport } from './routes/api.support-images.$messageId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -203,6 +204,12 @@ const ApiCommunityImagesMessageIdRoute =
     path: '/api/community-images/$messageId',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiSupportImagesMessageIdRoute =
+  ApiSupportImagesMessageIdRouteImport.update({
+    id: '/api/support-images/$messageId',
+    path: '/api/support-images/$messageId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -237,6 +244,7 @@ export interface FileRoutesByFullPath {
   '/admin/wallets': typeof AdminWalletsRoute
   '/admin/withdrawals': typeof AdminWithdrawalsRoute
   '/api/community-images/$messageId': typeof ApiCommunityImagesMessageIdRoute
+  '/api/support-images/$messageId': typeof ApiSupportImagesMessageIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -271,6 +279,7 @@ export interface FileRoutesByTo {
   '/admin/wallets': typeof AdminWalletsRoute
   '/admin/withdrawals': typeof AdminWithdrawalsRoute
   '/api/community-images/$messageId': typeof ApiCommunityImagesMessageIdRoute
+  '/api/support-images/$messageId': typeof ApiSupportImagesMessageIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -306,6 +315,7 @@ export interface FileRoutesById {
   '/admin_/wallets': typeof AdminWalletsRoute
   '/admin_/withdrawals': typeof AdminWithdrawalsRoute
   '/api/community-images/$messageId': typeof ApiCommunityImagesMessageIdRoute
+  '/api/support-images/$messageId': typeof ApiSupportImagesMessageIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -342,6 +352,7 @@ export interface FileRouteTypes {
     | '/admin/wallets'
     | '/admin/withdrawals'
     | '/api/community-images/$messageId'
+    | '/api/support-images/$messageId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -376,6 +387,7 @@ export interface FileRouteTypes {
     | '/admin/wallets'
     | '/admin/withdrawals'
     | '/api/community-images/$messageId'
+    | '/api/support-images/$messageId'
   id:
     | '__root__'
     | '/'
@@ -410,6 +422,7 @@ export interface FileRouteTypes {
     | '/admin_/wallets'
     | '/admin_/withdrawals'
     | '/api/community-images/$messageId'
+    | '/api/support-images/$messageId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -445,6 +458,7 @@ export interface RootRouteChildren {
   AdminWalletsRoute: typeof AdminWalletsRoute
   AdminWithdrawalsRoute: typeof AdminWithdrawalsRoute
   ApiCommunityImagesMessageIdRoute: typeof ApiCommunityImagesMessageIdRoute
+  ApiSupportImagesMessageIdRoute: typeof ApiSupportImagesMessageIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -673,6 +687,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiCommunityImagesMessageIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/support-images/$messageId': {
+      id: '/api/support-images/$messageId'
+      path: '/api/support-images/$messageId'
+      fullPath: '/api/support-images/$messageId'
+      preLoaderRoute: typeof ApiSupportImagesMessageIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -709,6 +730,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminWalletsRoute: AdminWalletsRoute,
   AdminWithdrawalsRoute: AdminWithdrawalsRoute,
   ApiCommunityImagesMessageIdRoute: ApiCommunityImagesMessageIdRoute,
+  ApiSupportImagesMessageIdRoute: ApiSupportImagesMessageIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

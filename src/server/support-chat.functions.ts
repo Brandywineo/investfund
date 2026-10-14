@@ -2,6 +2,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { and, desc, eq, lt, lte, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { getDb } from '#/db'
+import { communityImage } from '#/domain/community'
 import {
   auditLogs,
   notifications,
@@ -72,6 +73,7 @@ export const getSupportConversation = createServerFn({ method: 'GET' })
       .select({
         id: supportMessages.id,
         body: supportMessages.body,
+        hasImage: sql<boolean>`${supportMessages.imageData} is not null`,
         fromAdmin: supportMessages.fromAdmin,
         createdAt: supportMessages.createdAt,
       })
@@ -167,12 +169,15 @@ export const sendSupportMessage = createServerFn({ method: 'POST' })
     targetInput.extend({
       requestId: z.string().uuid(),
       body: z.string().trim().min(1).max(4000),
+      imageData: communityImage.optional(),
     }),
   )
   .handler(async ({ data }) => {
     const user = await requireUser()
     const target = ownerId(user, data.userId)
     const fromAdmin = user.role === 'ADMIN' && target !== user.id
+    if (data.imageData && !fromAdmin)
+      throw new Error('Only administrators can attach support images')
     return getDb().transaction(async (tx) => {
       const owner = await tx
         .select({ id: users.id })
@@ -201,7 +206,8 @@ export const sendSupportMessage = createServerFn({ method: 'POST' })
         if (
           previous.authorUserId !== user.id ||
           previous.conversationId !== conversation.id ||
-          previous.body !== data.body
+          previous.body !== data.body ||
+          previous.imageData !== (data.imageData ?? null)
         )
           throw new Error('Message request conflict')
         return { id: previous.id }
@@ -226,6 +232,7 @@ export const sendSupportMessage = createServerFn({ method: 'POST' })
         authorUserId: user.id,
         fromAdmin,
         body: data.body,
+        imageData: data.imageData,
       })
       await tx
         .update(supportConversations)

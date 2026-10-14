@@ -23,6 +23,7 @@ import {
 } from './support-chat.functions'
 import { eq } from 'drizzle-orm'
 import { getCommunityImageResponse } from './community-image.service'
+import { getSupportImageResponse } from './support-image.service'
 import { listUsers } from './admin-users.functions'
 import { getAdminWithdrawals } from './custody.functions'
 
@@ -382,6 +383,7 @@ describe('private support PostgreSQL handlers', () => {
         userId: memberId,
         requestId,
         body: 'Hello. Please check your email, including Spam/Junk, and reply here for help.',
+        imageData: png,
       },
     })
     const messages = await state.db.select().from(schema.supportMessages)
@@ -403,6 +405,7 @@ describe('private support PostgreSQL handlers', () => {
         userId: memberId,
         requestId,
         body: 'Hello. Please check your email, including Spam/Junk, and reply here for help.',
+        imageData: png,
       },
     })
     expect(await state.db.select().from(schema.supportMessages)).toHaveLength(1)
@@ -411,6 +414,58 @@ describe('private support PostgreSQL handlers', () => {
         data: { userId: memberId, requestId, body: 'Different body' },
       }),
     ).rejects.toThrow('conflict')
+  })
+  it('serves screenshots only to the owner and admins, with no public cache or inline data in history', async () => {
+    signIn(memberId, 'USER')
+    const history = await getSupportConversation({ data: {} })
+    expect(history.messages[0].hasImage).toBe(true)
+    expect(history.messages[0]).not.toHaveProperty('imageData')
+    const image = await getSupportImageResponse(requestId)
+    expect(image.status).toBe(200)
+    expect(image.headers.get('content-type')).toBe('image/png')
+    expect(image.headers.get('cache-control')).toBe('private, no-store')
+    expect((await image.arrayBuffer()).byteLength).toBeGreaterThan(12)
+    await expect(
+      sendSupportMessage({
+        data: { requestId: randomUUID(), body: 'Not allowed', imageData: png },
+      }),
+    ).rejects.toThrow('Only administrators')
+    signIn(managerId, 'MANAGER')
+    expect((await getSupportImageResponse(requestId)).status).toBe(404)
+    state.user = null
+    expect((await getSupportImageResponse(requestId)).status).toBe(401)
+    signIn(adminId, 'ADMIN')
+    expect((await getSupportImageResponse(requestId)).status).toBe(200)
+    expect((await getSupportImageResponse('not-an-id')).status).toBe(404)
+    await expect(
+      sendSupportMessage({
+        data: {
+          userId: memberId,
+          requestId,
+          body: 'Hello. Please check your email, including Spam/Junk, and reply here for help.',
+        },
+      }),
+    ).rejects.toThrow('conflict')
+  })
+  it('rejects unsupported, disguised and oversized screenshots before saving', async () => {
+    signIn(adminId, 'ADMIN')
+    for (const imageData of [
+      'data:image/svg+xml;base64,PHN2Zz4=',
+      'data:image/png;base64,' +
+        Buffer.from('not a real screenshot').toString('base64'),
+      'data:image/png;base64,' + Buffer.alloc(1_000_001).toString('base64'),
+    ])
+      expect(() =>
+        sendSupportMessage({
+          data: {
+            userId: memberId,
+            requestId: randomUUID(),
+            body: 'Screenshot',
+            imageData,
+          },
+        }),
+      ).toThrow()
+    expect(await state.db.select().from(schema.supportMessages)).toHaveLength(1)
   })
   it('prevents another user or manager from reading, writing or marking the conversation read', async () => {
     signIn(managerId, 'MANAGER')
