@@ -42,6 +42,7 @@ import { Route as AdminWalletsRouteImport } from './routes/admin_.wallets'
 import { Route as AdminWithdrawalsRouteImport } from './routes/admin_.withdrawals'
 import { Route as ApiCommunityImagesMessageIdRouteImport } from './routes/api.community-images.$messageId'
 import { Route as ApiSupportImagesMessageIdRouteImport } from './routes/api.support-images.$messageId'
+import { Route as ApiSupportFilesMessageIdIndexRouteImport } from './routes/api.support-files.$messageId.$index'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -210,6 +211,12 @@ const ApiSupportImagesMessageIdRoute =
     path: '/api/support-images/$messageId',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiSupportFilesMessageIdIndexRoute =
+  ApiSupportFilesMessageIdIndexRouteImport.update({
+    id: '/api/support-files/$messageId/$index',
+    path: '/api/support-files/$messageId/$index',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -245,6 +252,7 @@ export interface FileRoutesByFullPath {
   '/admin/withdrawals': typeof AdminWithdrawalsRoute
   '/api/community-images/$messageId': typeof ApiCommunityImagesMessageIdRoute
   '/api/support-images/$messageId': typeof ApiSupportImagesMessageIdRoute
+  '/api/support-files/$messageId/$index': typeof ApiSupportFilesMessageIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -280,6 +288,7 @@ export interface FileRoutesByTo {
   '/admin/withdrawals': typeof AdminWithdrawalsRoute
   '/api/community-images/$messageId': typeof ApiCommunityImagesMessageIdRoute
   '/api/support-images/$messageId': typeof ApiSupportImagesMessageIdRoute
+  '/api/support-files/$messageId/$index': typeof ApiSupportFilesMessageIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -316,6 +325,7 @@ export interface FileRoutesById {
   '/admin_/withdrawals': typeof AdminWithdrawalsRoute
   '/api/community-images/$messageId': typeof ApiCommunityImagesMessageIdRoute
   '/api/support-images/$messageId': typeof ApiSupportImagesMessageIdRoute
+  '/api/support-files/$messageId/$index': typeof ApiSupportFilesMessageIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -353,6 +363,7 @@ export interface FileRouteTypes {
     | '/admin/withdrawals'
     | '/api/community-images/$messageId'
     | '/api/support-images/$messageId'
+    | '/api/support-files/$messageId/$index'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -388,6 +399,7 @@ export interface FileRouteTypes {
     | '/admin/withdrawals'
     | '/api/community-images/$messageId'
     | '/api/support-images/$messageId'
+    | '/api/support-files/$messageId/$index'
   id:
     | '__root__'
     | '/'
@@ -423,6 +435,7 @@ export interface FileRouteTypes {
     | '/admin_/withdrawals'
     | '/api/community-images/$messageId'
     | '/api/support-images/$messageId'
+    | '/api/support-files/$messageId/$index'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -459,6 +472,7 @@ export interface RootRouteChildren {
   AdminWithdrawalsRoute: typeof AdminWithdrawalsRoute
   ApiCommunityImagesMessageIdRoute: typeof ApiCommunityImagesMessageIdRoute
   ApiSupportImagesMessageIdRoute: typeof ApiSupportImagesMessageIdRoute
+  ApiSupportFilesMessageIdIndexRoute: typeof ApiSupportFilesMessageIdIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -694,6 +708,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiSupportImagesMessageIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/support-files/$messageId/$index': {
+      id: '/api/support-files/$messageId/$index'
+      path: '/api/support-files/$messageId/$index'
+      fullPath: '/api/support-files/$messageId/$index'
+      preLoaderRoute: typeof ApiSupportFilesMessageIdIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -731,6 +752,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminWithdrawalsRoute: AdminWithdrawalsRoute,
   ApiCommunityImagesMessageIdRoute: ApiCommunityImagesMessageIdRoute,
   ApiSupportImagesMessageIdRoute: ApiSupportImagesMessageIdRoute,
+  ApiSupportFilesMessageIdIndexRoute: ApiSupportFilesMessageIdIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

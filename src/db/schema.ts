@@ -1548,6 +1548,10 @@ export const supportMessages = pgTable(
     fromAdmin: boolean('from_admin').notNull(),
     body: text('body').notNull(),
     imageData: text('image_data'),
+    attachments: jsonb('attachments')
+      .$type<Array<{ name: string; mime: string; data: string }>>()
+      .default([])
+      .notNull(),
     createdAt: timestamp('created_at', { withTimezone: true })
       .defaultNow()
       .notNull(),
