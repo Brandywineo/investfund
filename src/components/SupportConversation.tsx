@@ -6,7 +6,6 @@ import {
 } from '#/server/support-chat.functions'
 import { formatKenyaDateTime } from '#/domain/display-time'
 import {
-  supportFileAccept,
   supportFileMime,
   SUPPORT_FILE_COUNT,
   SUPPORT_FILE_LIMIT,
@@ -23,8 +22,9 @@ export function SupportConversation({
 }) {
   const [thread, setThread] = useState<Conversation | null>(null)
   const [body, setBody] = useState('')
-  const [files, setFiles] = useState<SupportAttachment[]>([])
-  const [readingImage, setReadingImage] = useState(false)
+  const [files, setFiles] = useState<File[]>([])
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null)
+  const [previewUrl, setPreviewUrl] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
@@ -32,8 +32,43 @@ export function SupportConversation({
     id: string
     body: string
     attachments: SupportAttachment[]
+    selectedFiles: File[]
   } | null>(null)
   const end = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const file = previewIndex === null ? undefined : files[previewIndex]
+    if (!file) {
+      setPreviewUrl('')
+      return
+    }
+    const url = URL.createObjectURL(file)
+    setPreviewUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [files, previewIndex])
+  function selectFiles(selected: File[]) {
+    if (!selected.length) return
+    if (files.length + selected.length > SUPPORT_FILE_COUNT) {
+      setError('Attach up to 5 files per message')
+      return
+    }
+    if (
+      selected.some(
+        (file) =>
+          !supportFileMime(file.name) ||
+          file.size > SUPPORT_FILE_LIMIT ||
+          !file.size,
+      )
+    ) {
+      setError(
+        'Use PNG, JPEG, WebP, PDF, DOCX, XLSX, TXT or CSV files up to 5 MB each',
+      )
+      return
+    }
+    setError('')
+    request.current = null
+    setFiles((previous) => [...previous, ...selected])
+  }
+
   useEffect(() => {
     let active = true
     async function refresh() {
@@ -80,19 +115,36 @@ export function SupportConversation({
     }
   }, [userId])
   async function send() {
-    if (!body.trim() || busy || readingImage) return
+    if (!body.trim() || busy) return
     setBusy(true)
     setError('')
-    if (
-      request.current?.body !== body.trim() ||
-      request.current.attachments !== files
-    )
-      request.current = {
-        id: crypto.randomUUID(),
-        body: body.trim(),
-        attachments: files,
-      }
     try {
+      if (
+        request.current?.body !== body.trim() ||
+        request.current.selectedFiles !== files
+      ) {
+        const attachments: SupportAttachment[] = []
+        // Encode only when sending, one file at a time to reduce peak memory.
+        for (const file of files) {
+          const data = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = () => resolve(String(reader.result).split(',')[1])
+            reader.onerror = () => reject(new Error('File could not be read'))
+            reader.readAsDataURL(file)
+          })
+          attachments.push({
+            name: file.name,
+            mime: supportFileMime(file.name)!,
+            data,
+          })
+        }
+        request.current = {
+          id: crypto.randomUUID(),
+          body: body.trim(),
+          attachments,
+          selectedFiles: files,
+        }
+      }
       await sendSupportMessage({
         data: {
           userId,
@@ -289,94 +341,83 @@ export function SupportConversation({
         />
         {admin && (
           <div className="mt-3 space-y-2">
-            <label className="block text-sm font-bold" htmlFor="support-files">
-              Attach files ({files.length}/{SUPPORT_FILE_COUNT})
+            <p className="text-sm font-bold">
+              Attachments ({files.length}/{SUPPORT_FILE_COUNT})
+            </p>
+            <label className="block text-sm font-bold" htmlFor="support-photos">
+              Add photos from gallery
             </label>
             <input
-              id="support-files"
+              id="support-photos"
               type="file"
               multiple
-              accept={supportFileAccept}
-              disabled={
-                busy || readingImage || files.length >= SUPPORT_FILE_COUNT
-              }
-              onChange={async (event) => {
-                const selected = Array.from(event.target.files ?? [])
+              accept="image/png,image/jpeg,image/webp"
+              disabled={busy || files.length >= SUPPORT_FILE_COUNT}
+              onChange={(event) => {
+                selectFiles(Array.from(event.target.files ?? []))
                 event.target.value = ''
-                if (!selected.length) return
-                if (files.length + selected.length > SUPPORT_FILE_COUNT) {
-                  setError('Attach up to 5 files per message')
-                  return
-                }
-                if (
-                  selected.some(
-                    (file) =>
-                      !supportFileMime(file.name) ||
-                      file.size > SUPPORT_FILE_LIMIT ||
-                      !file.size,
-                  )
-                ) {
-                  setError(
-                    'Use PNG, JPEG, WebP, PDF, DOCX, XLSX, TXT or CSV files up to 5 MB each',
-                  )
-                  return
-                }
-                setReadingImage(true)
-                setError('')
-                try {
-                  const added = await Promise.all(
-                    selected.map(async (file) => {
-                      const data = await new Promise<string>(
-                        (resolve, reject) => {
-                          const reader = new FileReader()
-                          reader.onload = () =>
-                            resolve(String(reader.result).split(',')[1])
-                          reader.onerror = () =>
-                            reject(new Error('File could not be read'))
-                          reader.readAsDataURL(file)
-                        },
-                      )
-                      return {
-                        name: file.name,
-                        mime: supportFileMime(file.name)!,
-                        data,
-                      }
-                    }),
-                  )
-                  setFiles((previous) => [...previous, ...added])
-                } catch {
-                  setError('Files could not be read; please select them again')
-                } finally {
-                  setReadingImage(false)
-                }
+              }}
+            />
+            <label
+              className="block text-sm font-bold"
+              htmlFor="support-documents"
+            >
+              Add documents
+            </label>
+            <input
+              id="support-documents"
+              type="file"
+              multiple
+              accept=".pdf,.docx,.xlsx,.txt,.csv"
+              disabled={busy || files.length >= SUPPORT_FILE_COUNT}
+              onChange={(event) => {
+                selectFiles(Array.from(event.target.files ?? []))
+                event.target.value = ''
               }}
             />
             <p className="text-xs text-[#557065]">
               Up to 5 files, 5 MB each: PNG, JPEG, WebP, PDF, DOCX, XLSX, TXT or
               CSV. Add a caption and remove private details before sending.
             </p>
-            {readingImage && <p className="text-sm">Loading files…</p>}
             {files.map((file, index) => (
               <div
                 key={index}
                 className="rounded-xl border border-black/10 p-3"
               >
-                {file.mime.startsWith('image/') && (
-                  <img
-                    src={`data:${file.mime};base64,${file.data}`}
-                    alt={file.name}
-                    className="max-h-48 max-w-full rounded-xl"
-                  />
+                {supportFileMime(file.name)?.startsWith('image/') && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() =>
+                        setPreviewIndex(previewIndex === index ? null : index)
+                      }
+                      className="text-sm font-bold"
+                    >
+                      {previewIndex === index
+                        ? 'Hide preview'
+                        : 'Preview image'}
+                    </button>
+                    {previewIndex === index && previewUrl && (
+                      <img
+                        src={previewUrl}
+                        alt={file.name}
+                        className="max-h-48 max-w-full rounded-xl"
+                      />
+                    )}
+                  </>
                 )}
                 <p className="break-words text-sm font-bold">{file.name}</p>
                 <button
                   type="button"
-                  disabled={busy || readingImage}
-                  onClick={() =>
+                  disabled={busy}
+                  onClick={() => {
+                    setPreviewIndex(null)
+                    request.current = null
                     setFiles((previous) =>
                       previous.filter((_, i) => i !== index),
                     )
-                  }
+                  }}
                   className="mt-2 text-sm font-bold"
                   aria-label={`Remove ${file.name}`}
                 >
@@ -391,7 +432,7 @@ export function SupportConversation({
             Replies appear here and in your notification bell.
           </span>
           <button
-            disabled={busy || readingImage || !body.trim() || !thread}
+            disabled={busy || !body.trim() || !thread}
             className="rounded-xl bg-[#123d2d] px-5 py-3 text-sm font-bold text-white disabled:opacity-40"
           >
             {busy ? 'Sending…' : 'Send message'}
