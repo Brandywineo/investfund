@@ -249,7 +249,7 @@ export const sendAdminComposedEmail = createServerFn({ method: 'POST' })
       userIds: z.array(z.string().uuid()).max(250).default([]),
       subject: z.string().trim().min(1).max(180),
       body: z.string().trim().min(1).max(20000),
-      confirmRecipientCount: z.number().int().min(1).max(10000),
+      confirmRecipientCount: z.number().int().min(1).max(1000),
     }),
   )
   .handler(async ({ data }) => {
@@ -279,11 +279,11 @@ export const sendAdminComposedEmail = createServerFn({ method: 'POST' })
           : and(eligibleEmailUser, inArray(users.id, ids)),
       )
       .orderBy(users.id)
-      .limit(10001)
+      .limit(1001)
 
     if (!recipients.length) throw new Error('No eligible recipients were found')
-    if (recipients.length > 10000) {
-      throw new Error('Recipient limit is 10,000 per send. Narrow the audience.')
+    if (recipients.length > 1000) {
+      throw new Error('Recipient limit is 1,000 per send. Narrow the audience.')
     }
     if (data.recipientMode === 'SELECTED' && recipients.length !== ids.length) {
       throw new Error('One or more selected users are no longer eligible to receive email')
@@ -309,6 +309,7 @@ export const sendAdminComposedEmail = createServerFn({ method: 'POST' })
           subject: data.subject,
           htmlBody,
           textBody: plainText,
+          eventKey: `admin-campaign:${campaignId}:${recipient.id}`,
         })),
       )
       await tx.insert(auditLogs).values({
