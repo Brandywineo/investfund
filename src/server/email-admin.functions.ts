@@ -248,7 +248,7 @@ export const sendAdminComposedEmail = createServerFn({ method: 'POST' })
       recipientMode: z.enum(['SELECTED', 'ALL_ACTIVE_VERIFIED']),
       userIds: z.array(z.string().uuid()).max(250).default([]),
       subject: z.string().trim().min(1).max(180),
-      body: z.string().trim().min(1).max(20000),
+      body: z.string().trim().min(1).max(10000),
       confirmRecipientCount: z.number().int().min(1).max(1000),
     }),
   )
@@ -295,10 +295,10 @@ export const sendAdminComposedEmail = createServerFn({ method: 'POST' })
     }
 
     const campaignId = crypto.randomUUID()
-    const plainText = data.body.replace(/\\r\\n?/g, '\\n')
+    const plainText = data.body.replace(/\r\n?/g, '\n')
     const htmlBody = `<!doctype html><html><body style="margin:0;padding:32px;background:#eef1eb;font-family:Arial,sans-serif;color:#10251c"><main style="max-width:640px;margin:auto;padding:32px;background:#fff;border-radius:20px"><h1 style="font-size:22px;color:#123d2d">InvestFund</h1>${plainText
-      .split(/\\n{2,}/)
-      .map((paragraph) => `<p style="line-height:1.7;white-space:pre-wrap">${escapeEmailHtml(paragraph).replace(/\\n/g, '<br>')}</p>`)
+      .split(/\n{2,}/)
+      .map((paragraph) => `<p style="line-height:1.7;white-space:pre-wrap">${escapeEmailHtml(paragraph).replace(/\n/g, '<br>')}</p>`)
       .join('')}<hr style="border:0;border-top:1px solid #e5e7eb;margin:28px 0"><p style="font-size:12px;color:#6e857a">You are receiving this message because you have an InvestFund account.</p></main></body></html>`
 
     await getDb().transaction(async (tx) => {
