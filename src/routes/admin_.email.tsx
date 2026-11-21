@@ -212,7 +212,7 @@ function AdminEmailPage() {
                   <span><b>Selected users</b><span className="block text-xs text-[#6e857a]">Search and select one or more accounts</span></span>
                 </label>
                 <label className="mt-3 flex items-start gap-3 text-sm">
-                  <input type="radio" checked={recipientMode === 'ALL_ACTIVE_VERIFIED'} onChange={() => setRecipientMode('ALL_ACTIVE_VERIFIED')} className="mt-1 accent-[#123d2d]" />
+                  <input type="radio" checked={recipientMode === 'ALL_ACTIVE_VERIFIED'} onChange={() => { setRecipientMode('ALL_ACTIVE_VERIFIED'); void searchRecipients() }} className="mt-1 accent-[#123d2d]" />
                   <span><b>All active, verified users</b><span className="block text-xs text-[#6e857a]">Excludes pending verification, suspended accounts, managers and admins</span></span>
                 </label>
                 <p className="mt-4 text-sm font-bold text-[#123d2d]">
