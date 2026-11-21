@@ -75,7 +75,8 @@ function AdminEmailPage() {
 
   async function sendCampaign(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const form = new FormData(event.currentTarget)
+    const formElement = event.currentTarget
+    const form = new FormData(formElement)
     const count = recipientMode === 'ALL_ACTIVE_VERIFIED' ? eligibleCount : selectedIds.length
     if (!count) {
       setError('Choose at least one eligible recipient.')
@@ -97,7 +98,7 @@ function AdminEmailPage() {
       })
       setMessage(result.message)
       setSelectedIds([])
-      event.currentTarget.reset()
+      formElement.reset()
       await router.invalidate()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Campaign could not be queued')
