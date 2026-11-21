@@ -1,8 +1,8 @@
 import { createServerFn } from '@tanstack/react-start'
-import { desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, ilike, or, sql, inArray } from 'drizzle-orm'
 import { z } from 'zod'
 import { getDb } from '#/db'
-import { auditLogs, emailOutbox, emailSettings } from '#/db/schema'
+import { auditLogs, emailOutbox, emailSettings, users } from '#/db/schema'
 import { encryptEmailSecret } from './email-crypto'
 import { processEmailOutbox, queueEmail } from './email.service'
 import { getSessionUser } from './session'
@@ -188,4 +188,146 @@ export const retryAdminEmail = createServerFn({ method: 'POST' })
       })
       .where(eq(emailOutbox.id, data.id))
     return processEmailOutbox(5)
+  })
+
+
+const eligibleEmailUser = and(
+  eq(users.role, 'USER'),
+  eq(users.status, 'ACTIVE'),
+  sql`${users.emailVerifiedAt} is not null`,
+)
+
+export const searchAdminEmailRecipients = createServerFn({ method: 'GET' })
+  .validator(z.object({ query: z.string().trim().max(100).default('') }))
+  .handler(async ({ data }) => {
+    await requireAdmin()
+    const query = data.query.trim()
+    const rows = await getDb()
+      .select({
+        id: users.id,
+        displayName: users.displayName,
+        email: users.email,
+      })
+      .from(users)
+      .where(
+        query
+          ? and(
+              eligibleEmailUser,
+              or(
+                ilike(users.displayName, `%${query}%`),
+                ilike(users.email, `%${query}%`),
+              ),
+            )
+          : eligibleEmailUser,
+      )
+      .orderBy(users.displayName)
+      .limit(30)
+    const [total] = await getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(users)
+      .where(eligibleEmailUser)
+    return { recipients: rows, eligibleCount: total?.count ?? 0 }
+  })
+
+function escapeEmailHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;',
+    }
+    return entities[character]!
+  })
+}
+
+export const sendAdminComposedEmail = createServerFn({ method: 'POST' })
+  .validator(
+    z.object({
+      recipientMode: z.enum(['SELECTED', 'ALL_ACTIVE_VERIFIED']),
+      userIds: z.array(z.string().uuid()).max(250).default([]),
+      subject: z.string().trim().min(1).max(180),
+      body: z.string().trim().min(1).max(20000),
+      confirmRecipientCount: z.number().int().min(1).max(10000),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const admin = await requireAdmin()
+    const settings = await getDb()
+      .select({ enabled: emailSettings.enabled })
+      .from(emailSettings)
+      .where(eq(emailSettings.id, 1))
+      .limit(1)
+      .then((rows) => rows.at(0))
+    if (!settings?.enabled) throw new Error('Email delivery is currently disabled')
+
+    const ids = [...new Set(data.userIds)]
+    if (data.recipientMode === 'SELECTED' && !ids.length) {
+      throw new Error('Select at least one recipient')
+    }
+    if (data.recipientMode === 'ALL_ACTIVE_VERIFIED' && ids.length) {
+      throw new Error('All-recipient sends cannot include a manual recipient list')
+    }
+
+    const recipients = await getDb()
+      .select({ id: users.id, email: users.email })
+      .from(users)
+      .where(
+        data.recipientMode === 'ALL_ACTIVE_VERIFIED'
+          ? eligibleEmailUser
+          : and(eligibleEmailUser, inArray(users.id, ids)),
+      )
+      .orderBy(users.id)
+      .limit(10001)
+
+    if (!recipients.length) throw new Error('No eligible recipients were found')
+    if (recipients.length > 10000) {
+      throw new Error('Recipient limit is 10,000 per send. Narrow the audience.')
+    }
+    if (data.recipientMode === 'SELECTED' && recipients.length !== ids.length) {
+      throw new Error('One or more selected users are no longer eligible to receive email')
+    }
+    if (recipients.length !== data.confirmRecipientCount) {
+      throw new Error(
+        `Recipient count changed from ${data.confirmRecipientCount} to ${recipients.length}. Review the audience and confirm again.`,
+      )
+    }
+
+    const campaignId = crypto.randomUUID()
+    const plainText = data.body.replace(/\\r\\n?/g, '\\n')
+    const htmlBody = `<!doctype html><html><body style="margin:0;padding:32px;background:#eef1eb;font-family:Arial,sans-serif;color:#10251c"><main style="max-width:640px;margin:auto;padding:32px;background:#fff;border-radius:20px"><h1 style="font-size:22px;color:#123d2d">InvestFund</h1>${plainText
+      .split(/\\n{2,}/)
+      .map((paragraph) => `<p style="line-height:1.7;white-space:pre-wrap">${escapeEmailHtml(paragraph).replace(/\\n/g, '<br>')}</p>`)
+      .join('')}<hr style="border:0;border-top:1px solid #e5e7eb;margin:28px 0"><p style="font-size:12px;color:#6e857a">You are receiving this message because you have an InvestFund account.</p></main></body></html>`
+
+    await getDb().transaction(async (tx) => {
+      await tx.insert(emailOutbox).values(
+        recipients.map((recipient) => ({
+          recipient: recipient.email,
+          category: 'ADMIN_BROADCAST',
+          subject: data.subject,
+          htmlBody,
+          textBody: plainText,
+        })),
+      )
+      await tx.insert(auditLogs).values({
+        actorUserId: admin.id,
+        action: 'ADMIN_EMAIL_CAMPAIGN_QUEUED',
+        entityType: 'email_campaign',
+        entityId: campaignId,
+        after: {
+          subject: data.subject,
+          recipientCount: recipients.length,
+          recipientMode: data.recipientMode,
+        },
+      })
+    })
+
+    return {
+      success: true,
+      campaignId,
+      queued: recipients.length,
+      message: `Queued ${recipients.length} individual email(s). The existing email worker will deliver them in the background.`,
+    }
   })
