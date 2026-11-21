@@ -10,6 +10,8 @@ import { currentUser } from '#/server/auth.functions'
 import {
   getAdminEmailSettings,
   retryAdminEmail,
+  searchAdminEmailRecipients,
+  sendAdminComposedEmail,
   sendAdminTestEmail,
   updateAdminEmailSettings,
 } from '#/server/email-admin.functions'
@@ -32,6 +34,11 @@ function AdminEmailPage() {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [recipientQuery, setRecipientQuery] = useState('')
+  const [recipientResults, setRecipientResults] = useState<Array<{ id: string; displayName: string; email: string }>>([])
+  const [eligibleCount, setEligibleCount] = useState(0)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [recipientMode, setRecipientMode] = useState<'SELECTED' | 'ALL_ACTIVE_VERIFIED'>('SELECTED')
   const settings = data.settings
 
   async function run(action: () => Promise<unknown>, success: string) {
@@ -46,6 +53,54 @@ function AdminEmailPage() {
       setError(
         cause instanceof Error ? cause.message : 'Email operation failed',
       )
+    } finally {
+      setBusy(false)
+    }
+  }
+
+
+  async function searchRecipients() {
+    setBusy(true)
+    setError('')
+    try {
+      const result = await searchAdminEmailRecipients({ data: { query: recipientQuery } })
+      setRecipientResults(result.recipients)
+      setEligibleCount(result.eligibleCount)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not search users')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function sendCampaign(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    const count = recipientMode === 'ALL_ACTIVE_VERIFIED' ? eligibleCount : selectedIds.length
+    if (!count) {
+      setError('Choose at least one eligible recipient.')
+      return
+    }
+    if (!window.confirm(`Queue this email for ${count} recipient(s)? Each person will receive a separate email.`)) return
+    setBusy(true)
+    setError('')
+    setMessage('')
+    try {
+      const result = await sendAdminComposedEmail({
+        data: {
+          recipientMode,
+          userIds: recipientMode === 'SELECTED' ? selectedIds : [],
+          subject: String(form.get('campaignSubject') || ''),
+          body: String(form.get('campaignBody') || ''),
+          confirmRecipientCount: count,
+        },
+      })
+      setMessage(result.message)
+      setSelectedIds([])
+      event.currentTarget.reset()
+      await router.invalidate()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Campaign could not be queued')
     } finally {
       setBusy(false)
     }
@@ -129,6 +184,85 @@ function AdminEmailPage() {
           <Metric label="Sent" value={data.counts.SENT ?? 0} />
           <Metric label="Failed" value={data.counts.FAILED ?? 0} />
           <Metric label="Provider" value="Resend" />
+        </section>
+
+
+        <section className="mt-5 rounded-[2rem] bg-white p-7 ring-1 ring-black/5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-[#6e857a]">Campaign email</p>
+              <h2 className="mt-1 text-2xl font-semibold">Compose and send</h2>
+              <p className="mt-2 max-w-2xl text-sm text-[#6e857a]">
+                Send a custom message to one account, selected accounts, or all active verified users.
+                Each recipient receives a separate email through the existing Resend queue.
+              </p>
+            </div>
+            <span className="rounded-full bg-[#f1f5ed] px-3 py-2 text-xs font-bold text-[#315b43]">
+              {settings?.enabled ? 'DELIVERY ENABLED' : 'DELIVERY DISABLED'}
+            </span>
+          </div>
+
+          <form onSubmit={sendCampaign} className="mt-6 grid gap-6 lg:grid-cols-[.9fr_1.1fr]">
+            <div className="space-y-4">
+              <div className="rounded-2xl bg-[#f8faf7] p-4">
+                <p className="text-sm font-bold">Audience</p>
+                <label className="mt-3 flex items-start gap-3 text-sm">
+                  <input type="radio" checked={recipientMode === 'SELECTED'} onChange={() => setRecipientMode('SELECTED')} className="mt-1 accent-[#123d2d]" />
+                  <span><b>Selected users</b><span className="block text-xs text-[#6e857a]">Search and select one or more accounts</span></span>
+                </label>
+                <label className="mt-3 flex items-start gap-3 text-sm">
+                  <input type="radio" checked={recipientMode === 'ALL_ACTIVE_VERIFIED'} onChange={() => setRecipientMode('ALL_ACTIVE_VERIFIED')} className="mt-1 accent-[#123d2d]" />
+                  <span><b>All active, verified users</b><span className="block text-xs text-[#6e857a]">Excludes pending verification, suspended accounts, managers and admins</span></span>
+                </label>
+                <p className="mt-4 text-sm font-bold text-[#123d2d]">
+                  {recipientMode === 'ALL_ACTIVE_VERIFIED'
+                    ? `${eligibleCount.toLocaleString()} eligible recipients`
+                    : `${selectedIds.length} selected`}
+                </p>
+              </div>
+
+              {recipientMode === 'SELECTED' ? (
+                <div className="rounded-2xl border border-black/10 p-4">
+                  <label className="text-sm font-semibold">
+                    Search by name or email
+                    <input value={recipientQuery} onChange={(event) => setRecipientQuery(event.target.value)} placeholder="Search users..." className={inputClass} />
+                  </label>
+                  <button type="button" onClick={() => void searchRecipients()} disabled={busy} className="mt-3 rounded-xl bg-[#123d2d] px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50">
+                    Search users
+                  </button>
+                  <p className="mt-3 text-xs text-[#6e857a]">{eligibleCount.toLocaleString()} active verified user(s) in total. Showing up to 30 matches.</p>
+                  <div className="mt-3 max-h-64 space-y-2 overflow-y-auto">
+                    {recipientResults.map((recipient) => (
+                      <label key={recipient.id} className="flex cursor-pointer items-start gap-3 rounded-xl bg-[#f8faf7] p-3 text-sm">
+                        <input type="checkbox" checked={selectedIds.includes(recipient.id)} onChange={(event) => setSelectedIds((current) => event.target.checked ? [...current, recipient.id] : current.filter((id) => id !== recipient.id))} className="mt-1 accent-[#123d2d]" />
+                        <span className="min-w-0"><b className="block">{recipient.displayName}</b><span className="block break-all text-xs text-[#6e857a]">{recipient.email}</span></span>
+                      </label>
+                    ))}
+                    {!recipientResults.length ? <p className="py-4 text-center text-xs text-[#6e857a]">Search to load eligible recipients.</p> : null}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-900">
+                  The recipient list is resolved on the server when you send. The count shown is a preview; if it changes before sending, the request will be stopped so you can review it again.
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-4">
+              <label className="block text-sm font-semibold">
+                Subject
+                <input name="campaignSubject" required maxLength={180} placeholder="Enter email subject" className={inputClass} />
+              </label>
+              <label className="block text-sm font-semibold">
+                Message
+                <textarea name="campaignBody" required maxLength={20000} rows={13} placeholder="Write your message here..." className={inputClass} />
+                <span className="mt-2 block text-xs font-normal text-[#6e857a]">Plain text is formatted into a clean InvestFund email. HTML and scripts are not accepted.</span>
+              </label>
+              <button type="submit" disabled={busy || !settings?.enabled || (recipientMode === 'SELECTED' ? !selectedIds.length : !eligibleCount)} className="w-full rounded-2xl bg-[#123d2d] px-5 py-3.5 font-bold text-white disabled:opacity-50">
+                {busy ? 'Processing...' : `Queue email to ${recipientMode === 'ALL_ACTIVE_VERIFIED' ? eligibleCount.toLocaleString() : selectedIds.length} recipient(s)`}
+              </button>
+            </div>
+          </form>
         </section>
 
         <div className="mt-5 grid gap-5 lg:grid-cols-[1.4fr_.6fr]">
